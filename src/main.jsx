@@ -34,7 +34,6 @@ import {
 } from 'lucide-react';
 import { BibleOnLogo, BibleBookIcon as BookOpen, ChurchCrossIcon as Church, SixteenthNoteIcon } from './brandIcons';
 import { bibleCatalog, loadKrvChapter } from './bibleData';
-import { homeQuestionSuggestions } from './ragPrototype';
 import OnboardingApp from './OnboardingApp';
 import './styles.css';
 
@@ -302,6 +301,39 @@ const churchDirectoryMembers = [
   },
 ];
 
+const churchMessageMembers = [
+  ...initialChurchConversations.map((conversation, index) => ({
+    id: conversation.id,
+    name: conversation.name,
+    department: conversation.department,
+    role: conversation.role,
+    tone: ['violet', 'green', 'rose'][index % 3],
+  })),
+  ...churchDirectoryMembers,
+].sort((first, second) => first.name.localeCompare(second.name, 'ko-KR'));
+
+function getConversationParticipantIds(conversation) {
+  return conversation.participantIds ?? [conversation.id];
+}
+
+function getConversationParticipants(participantIds) {
+  return churchMessageMembers
+    .filter((member) => participantIds.includes(member.id))
+    .sort((first, second) => first.name.localeCompare(second.name, 'ko-KR'));
+}
+
+function getConversationDetails(participantIds) {
+  const participants = getConversationParticipants(participantIds);
+  const firstParticipant = participants[0];
+  const isGroup = participants.length > 1;
+
+  return {
+    name: isGroup ? `${firstParticipant.name} 외 ${participants.length - 1}명` : (firstParticipant?.name ?? '대화방'),
+    department: isGroup ? '단체 채팅' : (firstParticipant?.department ?? churchInfo.department),
+    role: isGroup ? `${participants.length}명` : (firstParticipant?.role ?? '교인'),
+  };
+}
+
 const tabs = [
   { id: 'bible', label: '성경', icon: BookOpen },
   { id: 'church', label: '교회', icon: Church },
@@ -330,6 +362,7 @@ function writeStoredValue(key, value) {
 function App() {
   const workspaceRef = useRef(null);
   const [isAppLoading, setIsAppLoading] = useState(true);
+  const [isHomeIntro, setIsHomeIntro] = useState(true);
   const [activeTab, setActiveTab] = useState('home');
   const [selectedBookId, setSelectedBookId] = useState('philippians');
   const [selectedChapter, setSelectedChapter] = useState(4);
@@ -365,6 +398,12 @@ function App() {
     const timerId = window.setTimeout(() => setIsAppLoading(false), 1050);
     return () => window.clearTimeout(timerId);
   }, []);
+
+  useEffect(() => {
+    if (isAppLoading) return undefined;
+    const timerId = window.setTimeout(() => setIsHomeIntro(false), 200);
+    return () => window.clearTimeout(timerId);
+  }, [isAppLoading]);
 
   const selectBiblePassage = (bookId = selectedBookId, chapter = selectedChapter) => {
     setSelectedBookId(bookId);
@@ -421,8 +460,10 @@ function App() {
     setNewPost('');
   };
 
+  const showHomeIntro = activeTab === 'home' && isHomeIntro;
+
   return (
-    <main className="app-shell" aria-busy={isAppLoading}>
+    <main className={`app-shell ${showHomeIntro ? 'is-home-intro' : ''}`} aria-busy={isAppLoading}>
       {isAppLoading && (
         <div className="app-loading-screen" role="status" aria-label="바이블온 불러오는 중">
           <BibleOnLogo className="app-loading-logo" variant="white" size={120} aria-hidden="true" />
@@ -447,6 +488,7 @@ function App() {
             ragMessages={homeRagMessages}
             setRagMessages={setHomeRagMessages}
             isChatOpen={isHomeChatOpen}
+            isIntro={showHomeIntro}
             openChat={() => setIsHomeChatOpen(true)}
             closeChat={closeHomeChat}
           />
@@ -741,6 +783,7 @@ function HomeView({
   ragMessages,
   setRagMessages,
   isChatOpen,
+  isIntro,
   openChat,
   closeChat,
 }) {
@@ -839,7 +882,7 @@ function HomeView({
   return (
     <div
       ref={homePageRef}
-      className={`home-page ${isChatOpen ? 'is-chatting' : ''}`}
+      className={`home-page ${isChatOpen ? 'is-chatting' : ''} ${isIntro ? 'is-intro' : ''}`}
       onPointerDown={handleSwipeStart}
       onPointerUp={handleSwipeEnd}
       onPointerCancel={() => { swipeGestureRef.current = null; }}
@@ -877,12 +920,6 @@ function HomeView({
         </div>
 
         <div className="home-lower-content" aria-hidden={isChatOpen} inert={isChatOpen ? true : undefined}>
-          <div className="home-question-suggestions" aria-label="추천 질문">
-            {homeQuestionSuggestions.map((suggestion) => (
-              <button type="button" key={suggestion} onClick={() => askBibleQuestion(suggestion)}>{suggestion}</button>
-            ))}
-          </div>
-
           <section className="home-dashboard-sheet" aria-label="홈 정보">
             <div className="page-stack">
               <button className="today-reading" type="button" aria-labelledby="today-reading-title" onClick={continueCurrentReading}>
@@ -1812,13 +1849,23 @@ function MessageView({ conversations, setConversations }) {
   const [openConversationId, setOpenConversationId] = useState('');
   const [memberQuery, setMemberQuery] = useState('');
   const [selectedMemberProfile, setSelectedMemberProfile] = useState(null);
-  const openConversation = conversations.find(({ id }) => id === openConversationId);
+  const [groupBuilderOpen, setGroupBuilderOpen] = useState(false);
+  const [draftConversation, setDraftConversation] = useState(null);
+  const storedOpenConversation = conversations.find(({ id }) => id === openConversationId);
+  const openConversation = storedOpenConversation
+    ?? (draftConversation?.id === openConversationId ? draftConversation : null);
   const normalizedQuery = memberQuery.trim().toLowerCase();
-  const filteredConversations = conversations.filter((conversation) =>
-    [conversation.name, conversation.department, conversation.role]
+  const filteredConversations = conversations.filter((conversation) => (
+    [
+      conversation.name,
+      conversation.department,
+      conversation.role,
+      ...getConversationParticipants(getConversationParticipantIds(conversation)).map(({ name }) => name),
+    ]
+      .filter(Boolean)
       .some((value) => value.toLowerCase().includes(normalizedQuery))
-  );
-  const recentConversationIds = new Set(conversations.map(({ id }) => id));
+  ));
+  const recentConversationIds = new Set(conversations.flatMap(getConversationParticipantIds));
   const filteredDirectoryMembers = churchDirectoryMembers.filter((member) => (
     !recentConversationIds.has(member.id)
     && [member.name, member.department, member.role]
@@ -1826,35 +1873,61 @@ function MessageView({ conversations, setConversations }) {
   ));
 
   const selectConversation = (conversationId) => {
+    setDraftConversation(null);
     setOpenConversationId(conversationId);
     setConversations((current) => current.map((conversation) => (
       conversation.id === conversationId ? { ...conversation, unread: 0 } : conversation
     )));
   };
 
+  const openDraftConversation = (members) => {
+    const participantIds = members
+      .map(({ id }) => id)
+      .sort((firstId, secondId) => {
+        const first = churchMessageMembers.find(({ id }) => id === firstId);
+        const second = churchMessageMembers.find(({ id }) => id === secondId);
+        return first.name.localeCompare(second.name, 'ko-KR');
+      });
+    const conversation = {
+      id: `draft-${Date.now()}-${participantIds.join('-')}`,
+      ...getConversationDetails(participantIds),
+      online: false,
+      unread: 0,
+      time: '',
+      lastMessage: '',
+      participantIds,
+      messages: [],
+      isDraft: true,
+    };
+    setDraftConversation(conversation);
+    setOpenConversationId(conversation.id);
+  };
+
   const startMemberConversation = (member) => {
-    const existingConversation = conversations.find(({ id }) => id === member.id);
-    if (!existingConversation) {
-      setConversations((current) => [
-        {
-          id: member.id,
-          name: member.name,
-          department: member.department,
-          role: member.role,
-          online: false,
-          unread: 0,
-          time: '방금',
-          lastMessage: '새 대화를 시작했어요.',
-          participantIds: [member.id],
-          messages: [
-            { id: `${member.id}-start`, from: 'system', text: `${member.name}님과의 대화를 시작했어요.`, time: '방금' },
-          ],
-        },
-        ...current,
-      ]);
-    }
+    const existingConversation = conversations.find((conversation) => {
+      const participantIds = getConversationParticipantIds(conversation);
+      return participantIds.length === 1 && participantIds[0] === member.id;
+    });
     setSelectedMemberProfile(null);
-    setOpenConversationId(member.id);
+    if (existingConversation) selectConversation(existingConversation.id);
+    else openDraftConversation([member]);
+  };
+
+  const startGroupConversation = (members) => {
+    setGroupBuilderOpen(false);
+    openDraftConversation(members);
+  };
+
+  const closeConversation = () => {
+    setOpenConversationId('');
+    setDraftConversation(null);
+  };
+
+  const persistDraftConversation = (conversation) => {
+    const { isDraft, ...persistedConversation } = conversation;
+    setConversations((current) => [persistedConversation, ...current]);
+    setDraftConversation(null);
+    setOpenConversationId(persistedConversation.id);
   };
 
   return (
@@ -1894,6 +1967,13 @@ function MessageView({ conversations, setConversations }) {
             </button>
           )}
         </label>
+        {directoryMode === 'members' && (
+          <button className="message-group-create" type="button" onClick={() => setGroupBuilderOpen(true)}>
+            <span><Users size={20} aria-hidden="true" /></span>
+            <span><strong>단체 채팅 만들기</strong><small>여러 구성원을 선택해 대화를 시작해요</small></span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+        )}
         {directoryMode === 'recent' ? (
           <div className="conversation-list">
             {filteredConversations.map((conversation) => (
@@ -1903,7 +1983,11 @@ function MessageView({ conversations, setConversations }) {
                 key={conversation.id}
                 onClick={() => selectConversation(conversation.id)}
               >
-                <span className="member-avatar" aria-hidden="true"><UserRound className="default-profile-glyph" /></span>
+                <span className="member-avatar" aria-hidden="true">
+                  {getConversationParticipantIds(conversation).length > 1
+                    ? <Users className="default-profile-glyph" />
+                    : <UserRound className="default-profile-glyph" />}
+                </span>
                 <span className="conversation-copy">
                   <span><strong>{conversation.name}</strong><small>{conversation.department} · {conversation.role}</small></span>
                   <p>{conversation.lastMessage}</p>
@@ -1946,12 +2030,25 @@ function MessageView({ conversations, setConversations }) {
         />
       )}
 
+      {groupBuilderOpen && (
+        <MemberSelectionSheet
+          title="단체 채팅 만들기"
+          description="함께 대화할 구성원을 선택하세요"
+          candidates={churchMessageMembers}
+          minimumSelection={2}
+          confirmLabel={(count) => `${count}명과 대화 시작`}
+          onClose={() => setGroupBuilderOpen(false)}
+          onConfirm={startGroupConversation}
+        />
+      )}
+
       {openConversation && (
         <MessageRoom
           conversation={openConversation}
-          conversations={conversations}
           setConversations={setConversations}
-          onBack={() => setOpenConversationId('')}
+          onBack={closeConversation}
+          onPersistDraft={persistDraftConversation}
+          onUpdateDraft={setDraftConversation}
         />
       )}
     </div>
@@ -1988,7 +2085,87 @@ function MemberProfileSheet({ member, onClose, onMessage }) {
   );
 }
 
-function MessageRoom({ conversation, conversations, setConversations, onBack }) {
+function MemberSelectionSheet({
+  title,
+  description,
+  candidates,
+  minimumSelection = 1,
+  confirmLabel,
+  onClose,
+  onConfirm,
+}) {
+  const [query, setQuery] = useState('');
+  const [selectedIds, setSelectedIds] = useState([]);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredCandidates = candidates.filter((member) => (
+    [member.name, member.department, member.role]
+      .some((value) => value.toLowerCase().includes(normalizedQuery))
+  ));
+  const selectedMembers = candidates.filter(({ id }) => selectedIds.includes(id));
+
+  const toggleMember = (memberId) => {
+    setSelectedIds((current) => (
+      current.includes(memberId)
+        ? current.filter((id) => id !== memberId)
+        : [...current, memberId]
+    ));
+  };
+
+  return (
+    <div className="member-picker-layer">
+      <button className="member-picker-backdrop" type="button" aria-label={`${title} 닫기`} onClick={onClose} />
+      <section className="member-picker-sheet" role="dialog" aria-modal="true" aria-labelledby="member-picker-title">
+        <header>
+          <div><h2 id="member-picker-title">{title}</h2><p>{description}</p></div>
+          <button type="button" aria-label={`${title} 닫기`} onClick={onClose}><X size={21} aria-hidden="true" /></button>
+        </header>
+        <label className="member-picker-search">
+          <Search size={18} aria-hidden="true" />
+          <input
+            aria-label="초대할 구성원 검색"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="이름 또는 부서 검색"
+          />
+          {query && <button type="button" aria-label="검색어 지우기" onClick={() => setQuery('')}><X size={16} /></button>}
+        </label>
+        <div className="member-picker-list">
+          {filteredCandidates.map((member) => {
+            const selected = selectedIds.includes(member.id);
+            return (
+              <button
+                className={selected ? 'is-selected' : ''}
+                type="button"
+                aria-pressed={selected}
+                key={member.id}
+                onClick={() => toggleMember(member.id)}
+              >
+                <span className={`directory-avatar tone-${member.tone ?? 'violet'}`} aria-hidden="true">
+                  <UserRound className="default-profile-glyph" />
+                </span>
+                <span><strong>{member.name}</strong><small>{member.department} · {member.role}</small></span>
+                <i aria-hidden="true">{selected && <Check size={16} />}</i>
+              </button>
+            );
+          })}
+          {filteredCandidates.length === 0 && <p>검색 결과가 없어요.</p>}
+        </div>
+        <footer>
+          <span>{selectedMembers.length}명 선택</span>
+          <button
+            type="button"
+            disabled={selectedMembers.length < minimumSelection}
+            onClick={() => onConfirm(selectedMembers)}
+          >
+            {confirmLabel(selectedMembers.length)}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, onUpdateDraft }) {
   const [draft, setDraft] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [messageQuery, setMessageQuery] = useState('');
@@ -1996,16 +2173,14 @@ function MessageRoom({ conversation, conversations, setConversations, onBack }) 
   const [inviteOpen, setInviteOpen] = useState(false);
   const searchInputRef = useRef(null);
   const messageListRef = useRef(null);
-  const participantIds = conversation.participantIds ?? [conversation.id];
-  const participants = conversations.filter(({ id }) => participantIds.includes(id));
-  const inviteCandidates = conversations.filter(({ id }) => !participantIds.includes(id));
+  const participantIds = getConversationParticipantIds(conversation);
+  const participants = getConversationParticipants(participantIds);
+  const inviteCandidates = churchMessageMembers.filter(({ id }) => !participantIds.includes(id));
   const normalizedMessageQuery = messageQuery.trim().toLowerCase();
   const visibleMessages = normalizedMessageQuery
     ? conversation.messages.filter((message) => message.text.toLowerCase().includes(normalizedMessageQuery))
     : conversation.messages;
-  const roomTitle = participants.length > 1
-    ? `${participants[0].name} 외 ${participants.length - 1}명`
-    : conversation.name;
+  const roomTitle = getConversationDetails(participantIds).name;
 
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus();
@@ -2018,6 +2193,12 @@ function MessageRoom({ conversation, conversations, setConversations, onBack }) 
   }, [conversation.messages.length, searchOpen]);
 
   const updateConversation = (updater) => {
+    if (conversation.isDraft) {
+      onUpdateDraft((current) => (
+        current?.id === conversation.id ? updater(current) : current
+      ));
+      return;
+    }
     setConversations((current) => current.map((item) => (
       item.id === conversation.id ? updater(item) : item
     )));
@@ -2027,7 +2208,7 @@ function MessageRoom({ conversation, conversations, setConversations, onBack }) 
     event.preventDefault();
     const text = draft.trim();
     if (!text) return;
-    updateConversation((current) => ({
+    const appendMessage = (current) => ({
       ...current,
       lastMessage: text,
       time: '방금',
@@ -2035,23 +2216,31 @@ function MessageRoom({ conversation, conversations, setConversations, onBack }) 
         ...current.messages,
         { id: `${current.id}-${Date.now()}`, from: 'me', text, time: '방금' },
       ],
-    }));
+    });
+    if (conversation.isDraft) onPersistDraft(appendMessage(conversation));
+    else updateConversation(appendMessage);
     setDraft('');
   };
 
-  const inviteParticipant = (candidate) => {
+  const inviteParticipants = (selectedMembers) => {
     updateConversation((current) => {
-      const currentParticipantIds = current.participantIds ?? [current.id];
-      if (currentParticipantIds.includes(candidate.id)) return current;
+      const currentParticipantIds = getConversationParticipantIds(current);
+      const nextParticipantIds = [...new Set([
+        ...currentParticipantIds,
+        ...selectedMembers.map(({ id }) => id),
+      ])];
+      const invitedNames = selectedMembers.map(({ name }) => name).join(', ');
       return {
         ...current,
-        participantIds: [...currentParticipantIds, candidate.id],
+        ...getConversationDetails(nextParticipantIds),
+        participantIds: nextParticipantIds,
         messages: [
           ...current.messages,
-          { id: `${current.id}-invite-${candidate.id}`, from: 'system', text: `${candidate.name}님을 대화에 초대했어요.`, time: '방금' },
+          { id: `${current.id}-invite-${Date.now()}`, from: 'system', text: `${invitedNames}님을 대화에 초대했어요.`, time: '방금' },
         ],
       };
     });
+    setInviteOpen(false);
   };
 
   const closeSearch = () => {
@@ -2154,20 +2343,9 @@ function MessageRoom({ conversation, conversations, setConversations, onBack }) 
                   </div>
                 ))}
               </div>
-              <button className="chat-invite-button" type="button" onClick={() => setInviteOpen((current) => !current)}>
+              <button className="chat-invite-button" type="button" onClick={() => setInviteOpen(true)}>
                 <UserPlus size={18} aria-hidden="true" />대화 상대 초대
               </button>
-              {inviteOpen && (
-                <div className="chat-invite-list">
-                  {inviteCandidates.length > 0 ? inviteCandidates.map((candidate) => (
-                    <button type="button" key={candidate.id} onClick={() => inviteParticipant(candidate)}>
-                      <span className="member-avatar" aria-hidden="true"><UserRound className="default-profile-glyph" /></span>
-                      <span><strong>{candidate.name}</strong><small>{candidate.department}</small></span>
-                      <i>초대</i>
-                    </button>
-                  )) : <p>초대할 구성원이 없어요.</p>}
-                </div>
-              )}
             </section>
 
             <section className="chat-setting-list">
@@ -2192,6 +2370,17 @@ function MessageRoom({ conversation, conversations, setConversations, onBack }) 
             </section>
           </aside>
         </div>
+      )}
+
+      {inviteOpen && (
+        <MemberSelectionSheet
+          title="대화 상대 초대"
+          description="초대할 구성원을 한 번에 선택하세요"
+          candidates={inviteCandidates}
+          confirmLabel={(count) => `${count}명 초대`}
+          onClose={() => setInviteOpen(false)}
+          onConfirm={inviteParticipants}
+        />
       )}
     </section>
   );

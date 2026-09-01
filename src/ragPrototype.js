@@ -1,12 +1,5 @@
 import { bibleCatalog, loadKrvChapter } from './bibleData';
 
-export const homeQuestionSuggestions = [
-  '불안할 때 읽을 말씀',
-  '지친 마음을 위한 말씀',
-  '중요한 결정을 앞두고 있어요',
-  '감사에 관한 말씀',
-];
-
 const bibleSearchTopics = [
   {
     keywords: ['불안', '걱정', '염려', '평안'],
