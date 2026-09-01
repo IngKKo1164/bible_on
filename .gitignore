@@ -18,3 +18,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# Reproducible RAG source downloads (see scripts/download-rag-data.ps1)
+data/rag/raw/*
+!data/rag/raw/.gitkeep
