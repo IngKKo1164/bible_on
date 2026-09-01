@@ -32,7 +32,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { BibleBookIcon as BookOpen, ChurchCrossIcon as Church, SixteenthNoteIcon } from './brandIcons';
+import { BibleOnLogo, BibleBookIcon as BookOpen, ChurchCrossIcon as Church, SixteenthNoteIcon } from './brandIcons';
 import { bibleCatalog, loadKrvChapter } from './bibleData';
 import { homeQuestionSuggestions } from './ragPrototype';
 import OnboardingApp from './OnboardingApp';
@@ -329,6 +329,7 @@ function writeStoredValue(key, value) {
 
 function App() {
   const workspaceRef = useRef(null);
+  const [isAppLoading, setIsAppLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('home');
   const [selectedBookId, setSelectedBookId] = useState('philippians');
   const [selectedChapter, setSelectedChapter] = useState(4);
@@ -359,6 +360,11 @@ function App() {
   );
 
   const selectedBook = bibleBooks.find((book) => book.id === selectedBookId) ?? bibleBooks[0];
+
+  useEffect(() => {
+    const timerId = window.setTimeout(() => setIsAppLoading(false), 1050);
+    return () => window.clearTimeout(timerId);
+  }, []);
 
   const selectBiblePassage = (bookId = selectedBookId, chapter = selectedChapter) => {
     setSelectedBookId(bookId);
@@ -416,7 +422,13 @@ function App() {
   };
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" aria-busy={isAppLoading}>
+      {isAppLoading && (
+        <div className="app-loading-screen" role="status" aria-label="바이블온 불러오는 중">
+          <BibleOnLogo className="app-loading-logo" variant="white" size={120} aria-hidden="true" />
+          <span className="app-loading-progress" aria-hidden="true"><i /></span>
+        </div>
+      )}
       <section className="workspace" aria-label="바이블온 앱" ref={workspaceRef}>
         <Topbar
           selectedTranslation={selectedTranslation}
@@ -933,7 +945,11 @@ function HomeView({
           <div className="home-chat-messages">
             {ragMessages.map((message) => (
               <div className={`home-chat-message is-${message.role}`} key={message.id}>
-                {message.role === 'assistant' && <span className="home-chat-avatar"><BookOpen size={16} aria-hidden="true" /></span>}
+                {message.role === 'assistant' && (
+                  <span className="home-chat-avatar">
+                    <BibleOnLogo variant="white" size={32} aria-hidden="true" />
+                  </span>
+                )}
                 <div className="home-chat-message-body">
                   <p>{message.text}</p>
                   {message.citations?.length > 0 && (
@@ -951,7 +967,7 @@ function HomeView({
             ))}
             {isSearching && (
               <div className="home-chat-message is-assistant is-loading" role="status">
-                <span className="home-chat-avatar"><BookOpen size={16} aria-hidden="true" /></span>
+                <span className="home-chat-avatar"><BibleOnLogo variant="white" size={32} aria-hidden="true" /></span>
                 <div className="home-chat-thinking"><i /><i /><i /></div>
               </div>
             )}
