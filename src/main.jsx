@@ -11,8 +11,10 @@ import {
   ChevronRight,
   ClipboardList,
   Flame,
+  Grid3X3,
   Highlighter,
   Home,
+  List,
   MessageCircle,
   MoreHorizontal,
   NotebookPen,
@@ -30,9 +32,9 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { BibleBookIcon as BookOpen, BibleOnLogo, ChurchCrossIcon as Church, SixteenthNoteIcon } from './brandIcons';
+import { BibleBookIcon as BookOpen, ChurchCrossIcon as Church, SixteenthNoteIcon } from './brandIcons';
 import { bibleCatalog, loadKrvChapter } from './bibleData';
-import { homeQuestionSuggestions, retrieveBibleSearchAnswer } from './ragPrototype';
+import { homeQuestionSuggestions } from './ragPrototype';
 import OnboardingApp from './OnboardingApp';
 import './styles.css';
 
@@ -76,6 +78,10 @@ const bibleBooks = bibleCatalog.map((book) => ({
   tags: [],
   ...(readingHighlights[book.id] ?? {}),
 }));
+
+const defaultRecentPassages = Object.entries(readingHighlights)
+  .map(([bookId, reading]) => ({ bookId, chapter: reading.chapter }))
+  .reverse();
 
 const translations = [
   { id: 'KRV', label: '개역한글' },
@@ -339,8 +345,9 @@ function App() {
   const [newPost, setNewPost] = useState('');
   const [posts, setPosts] = useState(communityPosts);
   const [conversations, setConversations] = useState(initialChurchConversations);
+  const [isHomeChatOpen, setIsHomeChatOpen] = useState(false);
   const [homeRagMessages, setHomeRagMessages] = useState(() => (
-    readStoredValue('bibleon.homeRagMessages', [])
+    readStoredValue('bibleon.homeTestMessagesV2', [])
   ));
   const [personalProfile, setPersonalProfile] = useState(() => ({
     ...defaultPersonalProfile,
@@ -365,6 +372,23 @@ function App() {
     });
   };
 
+  const closeHomeChat = () => {
+    setIsHomeChatOpen(false);
+    window.requestAnimationFrame(() => {
+      workspaceRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  };
+
+  const selectTab = (tabId) => {
+    if (tabId === 'home') {
+      setActiveTab('home');
+      closeHomeChat();
+      return;
+    }
+    setIsHomeChatOpen(false);
+    setActiveTab(tabId);
+  };
+
   useEffect(() => {
     writeStoredValue('bibleon.verseNotes', verseNotes);
   }, [verseNotes]);
@@ -378,7 +402,7 @@ function App() {
   }, [personalProfile]);
 
   useEffect(() => {
-    writeStoredValue('bibleon.homeRagMessages', homeRagMessages);
+    writeStoredValue('bibleon.homeTestMessagesV2', homeRagMessages);
   }, [homeRagMessages]);
 
   const addQtPost = () => {
@@ -410,6 +434,9 @@ function App() {
             favoriteRefs={favoriteRefs}
             ragMessages={homeRagMessages}
             setRagMessages={setHomeRagMessages}
+            isChatOpen={isHomeChatOpen}
+            openChat={() => setIsHomeChatOpen(true)}
+            closeChat={closeHomeChat}
           />
         )}
         {activeTab === 'bible' && (
@@ -451,7 +478,7 @@ function App() {
           />
         )}
       </section>
-      <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
+      <BottomNav activeTab={activeTab} onSelectTab={selectTab} />
     </main>
   );
 }
@@ -666,7 +693,7 @@ function NotificationSwipeItem({ notification, onRead, onDelete }) {
   );
 }
 
-function BottomNav({ activeTab, setActiveTab }) {
+function BottomNav({ activeTab, onSelectTab }) {
   return (
     <nav className="bottom-nav" aria-label="하단 메뉴">
       {tabs.map((tab) => {
@@ -677,7 +704,7 @@ function BottomNav({ activeTab, setActiveTab }) {
             key={tab.id}
             type="button"
             aria-current={activeTab === tab.id ? 'page' : undefined}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => onSelectTab(tab.id)}
           >
             <span className="nav-icon">
               <Icon size={21} strokeWidth={activeTab === tab.id ? 2.5 : 2} aria-hidden="true" />
@@ -701,52 +728,81 @@ function HomeView({
   favoriteRefs,
   ragMessages,
   setRagMessages,
+  isChatOpen,
+  openChat,
+  closeChat,
 }) {
   const [question, setQuestion] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const answerEndRef = useRef(null);
-  const isChatting = ragMessages.length > 0;
+  const homePageRef = useRef(null);
+  const homeContentClusterRef = useRef(null);
+  const searchContainerRef = useRef(null);
+  const questionInputRef = useRef(null);
+  const swipeGestureRef = useRef(null);
 
   useEffect(() => {
-    if (!isChatting) return;
+    if (!isChatOpen) return;
     window.requestAnimationFrame(() => {
       answerEndRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
     });
-  }, [isChatting, ragMessages.length]);
+  }, [isChatOpen, ragMessages.length]);
+
+  useEffect(() => {
+    const input = questionInputRef.current;
+    if (!input) return;
+    input.style.height = 'auto';
+    const maxHeight = 154;
+    input.style.height = `${Math.min(input.scrollHeight, maxHeight)}px`;
+    input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, [question]);
+
+  useEffect(() => {
+    const syncHomeLayout = () => {
+      const page = homePageRef.current;
+      const cluster = homeContentClusterRef.current;
+      const search = searchContainerRef.current;
+      const bottomNav = document.querySelector('.bottom-nav');
+      if (!page || !cluster || !search || !bottomNav) return;
+
+      const pageTop = page.getBoundingClientRect().top;
+      const availableHeight = bottomNav.getBoundingClientRect().top - pageTop;
+      const clusterShift = Math.max(0, availableHeight - cluster.offsetTop - search.offsetHeight);
+      page.style.setProperty('--home-chat-height', `${availableHeight}px`);
+      page.style.setProperty('--home-cluster-shift', `${clusterShift}px`);
+      page.style.setProperty('--home-composer-height', `${search.offsetHeight}px`);
+    };
+
+    syncHomeLayout();
+    const frameId = window.requestAnimationFrame(syncHomeLayout);
+    window.addEventListener('resize', syncHomeLayout);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener('resize', syncHomeLayout);
+    };
+  }, [isChatOpen, question]);
 
   const askBibleQuestion = async (nextQuestion) => {
     const text = nextQuestion.trim();
     if (!text || isSearching) return;
 
     const userMessage = { id: `question-${Date.now()}`, role: 'user', text };
+    openChat();
     setRagMessages((current) => [...current, userMessage]);
     setQuestion('');
     setIsSearching(true);
 
-    try {
-      const result = await retrieveBibleSearchAnswer(text);
-      setRagMessages((current) => [
-        ...current,
-        {
-          id: `answer-${Date.now()}`,
-          role: 'assistant',
-          text: result.answer,
-          citations: result.citations,
-        },
-      ]);
-    } catch {
-      setRagMessages((current) => [
-        ...current,
-        {
-          id: `answer-error-${Date.now()}`,
-          role: 'assistant',
-          text: '성경 본문을 불러오지 못했어요. 잠시 후 다시 질문해 주세요.',
-          citations: [],
-        },
-      ]);
-    } finally {
-      setIsSearching(false);
-    }
+    await new Promise((resolve) => window.setTimeout(resolve, 420));
+    setRagMessages((current) => [
+      ...current,
+      {
+        id: `answer-${Date.now()}`,
+        role: 'assistant',
+        text: 'Test 중입니다.',
+        citations: [],
+      },
+    ]);
+    setIsSearching(false);
   };
 
   const submitQuestion = (event) => {
@@ -754,47 +810,122 @@ function HomeView({
     askBibleQuestion(question);
   };
 
-  return (
-    <div className={`home-page ${isChatting ? 'is-chatting' : ''}`}>
-      {!isChatting && (
-        <div className="home-search-brand" aria-hidden="true">
-          <BibleOnLogo size={52} />
-          <strong>바이블온</strong>
-        </div>
-      )}
+  const handleSwipeStart = (event) => {
+    if (!isChatOpen || event.target.closest('.home-rag-search')) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    swipeGestureRef.current = { x: event.clientX, y: event.clientY };
+  };
 
-      <div className="home-search-sticky">
-        <form className="home-rag-search" role="search" onSubmit={submitQuestion}>
-          <Search size={20} aria-hidden="true" />
-          <input
-            aria-label="말씀 질문"
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            placeholder="말씀을 찾아보세요"
-          />
-          {question && (
-            <button className="home-search-clear" type="button" aria-label="질문 지우기" onClick={() => setQuestion('')}>
-              <X size={16} aria-hidden="true" />
-            </button>
-          )}
-          <button className="home-search-submit" type="submit" aria-label="질문 보내기" disabled={!question.trim() || isSearching}>
-            <Send size={18} aria-hidden="true" />
-          </button>
-        </form>
+  const handleSwipeEnd = (event) => {
+    if (!swipeGestureRef.current || !isChatOpen) return;
+    const deltaX = event.clientX - swipeGestureRef.current.x;
+    const deltaY = event.clientY - swipeGestureRef.current.y;
+    swipeGestureRef.current = null;
+    if (deltaY < -72 && Math.abs(deltaY) > Math.abs(deltaX) * 1.25) closeChat();
+  };
+
+  return (
+    <div
+      ref={homePageRef}
+      className={`home-page ${isChatOpen ? 'is-chatting' : ''}`}
+      onPointerDown={handleSwipeStart}
+      onPointerUp={handleSwipeEnd}
+      onPointerCancel={() => { swipeGestureRef.current = null; }}
+    >
+      <div className="home-search-brand" aria-hidden={isChatOpen}>
+        <strong>무엇이든 편하게 물어보세요.</strong>
       </div>
 
-      {!isChatting && (
-        <div className="home-question-suggestions" aria-label="추천 질문">
-          {homeQuestionSuggestions.map((suggestion) => (
-            <button type="button" key={suggestion} onClick={() => askBibleQuestion(suggestion)}>{suggestion}</button>
-          ))}
+      <div className="home-content-cluster" ref={homeContentClusterRef}>
+        <div className="home-search-sticky" ref={searchContainerRef}>
+          <form className="home-rag-search" role="search" onSubmit={submitQuestion}>
+            <Search size={20} aria-hidden="true" />
+            <textarea
+              ref={questionInputRef}
+              aria-label="바이블온 질문"
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }}
+              placeholder="바이블온에게 물어보세요"
+              rows="1"
+            />
+            {question && (
+              <button className="home-search-clear" type="button" aria-label="질문 지우기" onClick={() => setQuestion('')}>
+                <X size={16} aria-hidden="true" />
+              </button>
+            )}
+            <button className="home-search-submit" type="submit" aria-label="질문 보내기" disabled={!question.trim() || isSearching}>
+              <Send size={18} aria-hidden="true" />
+            </button>
+          </form>
         </div>
-      )}
 
-      {isChatting ? (
-        <section className="home-rag-chat" aria-label="말씀 찾기 대화" aria-live="polite">
+        <div className="home-lower-content" aria-hidden={isChatOpen} inert={isChatOpen ? true : undefined}>
+          <div className="home-question-suggestions" aria-label="추천 질문">
+            {homeQuestionSuggestions.map((suggestion) => (
+              <button type="button" key={suggestion} onClick={() => askBibleQuestion(suggestion)}>{suggestion}</button>
+            ))}
+          </div>
+
+          <section className="home-dashboard-sheet" aria-label="홈 정보">
+            <div className="page-stack">
+              <button className="today-reading" type="button" aria-labelledby="today-reading-title" onClick={continueCurrentReading}>
+                <div className="today-reading-head">
+                  <div>
+                    <span className="eyebrow">성경 이어서 읽기</span>
+                    <h2 id="today-reading-title">{selectedBook.name} {selectedChapter}장</h2>
+                    <p>{selectedBook.title} · {selectedBook.lastRead}</p>
+                  </div>
+                  <span className="progress-number">{selectedBook.progress}%</span>
+                </div>
+                <ProgressBar value={selectedBook.progress} />
+              </button>
+
+              <section className="church-context">
+                <div className="church-context-mark"><Church size={22} aria-hidden="true" /></div>
+                <div>
+                  <span>내 교회</span>
+                  <strong>{churchInfo.name}</strong>
+                  <small>{churchInfo.department} · {churchInfo.role}</small>
+                </div>
+                <ChevronRight size={19} aria-hidden="true" />
+              </section>
+
+              <Section title="오늘 할 일">
+                <ListSurface>
+                  <ListRow
+                    icon={PenLine}
+                    title="오늘의 QT 남기기"
+                    description={`${churchInfo.department}에 묵상을 나눠보세요`}
+                    action="쓰기"
+                  />
+                  <ListRow
+                    icon={Sparkles}
+                    title="말씀 로드맵 확인"
+                    description={`이번 주 5일 중 1일 완료 · ${readCount}절 읽음`}
+                    action="보기"
+                  />
+                </ListSurface>
+              </Section>
+
+              <HomeRecommendations
+                query={query}
+                setQuery={setQuery}
+                selectBiblePassage={selectBiblePassage}
+                favoriteRefs={favoriteRefs}
+              />
+            </div>
+          </section>
+        </div>
+      </div>
+
+      {isChatOpen && (
+        <section className="home-rag-chat" aria-label="바이블온 대화" aria-live="polite">
           <div className="home-chat-toolbar">
-            <span>본문 기반</span>
             <button type="button" aria-label="새 대화" title="새 대화" onClick={() => setRagMessages([])}>
               <PenLine size={18} aria-hidden="true" />
             </button>
@@ -827,57 +958,223 @@ function HomeView({
             <div ref={answerEndRef} />
           </div>
         </section>
-      ) : (
-        <section className="home-dashboard-sheet" aria-label="홈 정보">
-          <div className="page-stack">
-            <button className="today-reading" type="button" aria-labelledby="today-reading-title" onClick={continueCurrentReading}>
-              <div className="today-reading-head">
-                <div>
-                  <span className="eyebrow">성경 이어서 읽기</span>
-                  <h2 id="today-reading-title">{selectedBook.name} {selectedChapter}장</h2>
-                  <p>{selectedBook.title} · {selectedBook.lastRead}</p>
-                </div>
-                <span className="progress-number">{selectedBook.progress}%</span>
-              </div>
-              <ProgressBar value={selectedBook.progress} />
-            </button>
-
-            <section className="church-context">
-              <div className="church-context-mark"><Church size={22} aria-hidden="true" /></div>
-              <div>
-                <span>내 교회</span>
-                <strong>{churchInfo.name}</strong>
-                <small>{churchInfo.department} · {churchInfo.role}</small>
-              </div>
-              <ChevronRight size={19} aria-hidden="true" />
-            </section>
-
-            <Section title="오늘 할 일">
-              <ListSurface>
-                <ListRow
-                  icon={PenLine}
-                  title="오늘의 QT 남기기"
-                  description={`${churchInfo.department}에 묵상을 나눠보세요`}
-                  action="쓰기"
-                />
-                <ListRow
-                  icon={Sparkles}
-                  title="말씀 로드맵 확인"
-                  description={`이번 주 5일 중 1일 완료 · ${readCount}절 읽음`}
-                  action="보기"
-                />
-              </ListSurface>
-            </Section>
-
-            <HomeRecommendations
-              query={query}
-              setQuery={setQuery}
-              selectBiblePassage={selectBiblePassage}
-              favoriteRefs={favoriteRefs}
-            />
-          </div>
-        </section>
       )}
+    </div>
+  );
+}
+
+function PickerWheel({ items, value, onChange, label }) {
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    const list = listRef.current;
+    const selected = list?.querySelector(`[data-wheel-value="${value}"]`);
+    if (!list || !selected) return;
+    list.scrollTo({
+      top: selected.offsetTop - ((list.clientHeight - selected.offsetHeight) / 2),
+      behavior: 'auto',
+    });
+  }, [items.length, label]);
+
+  const syncCenteredItem = () => {
+    const list = listRef.current;
+    if (!list) return;
+    const center = list.scrollTop + (list.clientHeight / 2);
+    const options = Array.from(list.querySelectorAll('[data-wheel-value]'));
+    const closest = options.reduce((current, option) => {
+      const distance = Math.abs((option.offsetTop + (option.offsetHeight / 2)) - center);
+      return !current || distance < current.distance ? { option, distance } : current;
+    }, null);
+    const nextValue = closest?.option.dataset.wheelValue;
+    if (nextValue !== undefined && String(value) !== nextValue) onChange(nextValue);
+  };
+
+  const selectItem = (event, nextValue) => {
+    const list = listRef.current;
+    const item = event.currentTarget;
+    onChange(String(nextValue));
+    list?.scrollTo({
+      top: item.offsetTop - ((list.clientHeight - item.offsetHeight) / 2),
+      behavior: 'smooth',
+    });
+  };
+
+  return (
+    <div className="picker-wheel-shell">
+      <div className="picker-wheel-focus" aria-hidden="true" />
+      <div
+        className="picker-wheel"
+        ref={listRef}
+        role="listbox"
+        aria-label={label}
+        tabIndex="0"
+        onScroll={syncCenteredItem}
+      >
+        {items.map((item) => (
+          <button
+            className={String(value) === String(item.value) ? 'is-selected' : ''}
+            key={item.value}
+            type="button"
+            role="option"
+            aria-selected={String(value) === String(item.value)}
+            data-wheel-value={item.value}
+            onClick={(event) => selectItem(event, item.value)}
+          >
+            <strong>{item.label}</strong>
+            {item.meta && <span>{item.meta}</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PassagePickerSheet({ selectedBookId, selectedChapter, onClose, onSelect }) {
+  const initialBook = bibleBooks.find((book) => book.id === selectedBookId) ?? bibleBooks[0];
+  const [step, setStep] = useState('book');
+  const [viewMode, setViewMode] = useState('wheel');
+  const [testament, setTestament] = useState(initialBook.testament);
+  const [draftBookId, setDraftBookId] = useState(initialBook.id);
+  const [draftChapter, setDraftChapter] = useState(selectedChapter);
+  const draftBook = bibleBooks.find((book) => book.id === draftBookId) ?? initialBook;
+  const visibleBooks = bibleBooks.filter((book) => book.testament === testament);
+  const chapters = Array.from({ length: draftBook.chapters }, (_, index) => index + 1);
+
+  useEffect(() => {
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
+
+  const updateDraftBook = (bookId) => {
+    const nextBook = bibleBooks.find((book) => book.id === bookId) ?? bibleBooks[0];
+    setDraftBookId(nextBook.id);
+    setDraftChapter((current) => Math.min(current, nextBook.chapters));
+  };
+
+  const changeTestament = (nextTestament) => {
+    setTestament(nextTestament);
+    const currentBook = bibleBooks.find((book) => book.id === draftBookId);
+    if (currentBook?.testament !== nextTestament) {
+      const firstBook = bibleBooks.find((book) => book.testament === nextTestament);
+      if (firstBook) updateDraftBook(firstBook.id);
+    }
+  };
+
+  const chooseGridItem = (value) => {
+    if (step === 'book') {
+      updateDraftBook(value);
+      setStep('chapter');
+      return;
+    }
+    onSelect(draftBook.id, Number(value));
+  };
+
+  const confirmWheelValue = () => {
+    if (step === 'book') {
+      setStep('chapter');
+      return;
+    }
+    onSelect(draftBook.id, draftChapter);
+  };
+
+  const wheelItems = step === 'book'
+    ? visibleBooks.map((book) => ({ value: book.id, label: book.name, meta: `${book.chapters}장` }))
+    : chapters.map((chapter) => ({ value: chapter, label: `${chapter}장` }));
+  const wheelValue = step === 'book' ? draftBook.id : draftChapter;
+
+  return (
+    <div
+      className="passage-picker-overlay"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section className="passage-picker-sheet" role="dialog" aria-modal="true" aria-labelledby="passage-picker-title">
+        <div className="passage-picker-handle" aria-hidden="true" />
+        <header className="passage-picker-header">
+          <div className="passage-picker-heading">
+            {step === 'chapter' && (
+              <button type="button" aria-label="성경 선택으로 돌아가기" title="성경 선택" onClick={() => setStep('book')}>
+                <ChevronLeft size={20} aria-hidden="true" />
+              </button>
+            )}
+            <h2 id="passage-picker-title">{step === 'book' ? '성경 선택' : draftBook.name}</h2>
+          </div>
+          <div className="passage-picker-actions">
+            <button
+              type="button"
+              aria-label={viewMode === 'wheel' ? '격자로 보기' : 'Wheel로 보기'}
+              title={viewMode === 'wheel' ? '격자로 보기' : 'Wheel로 보기'}
+              onClick={() => setViewMode((current) => current === 'wheel' ? 'grid' : 'wheel')}
+            >
+              {viewMode === 'wheel'
+                ? <Grid3X3 size={20} aria-hidden="true" />
+                : <List size={21} aria-hidden="true" />}
+            </button>
+            <button type="button" aria-label="성경 선택 닫기" title="닫기" onClick={onClose}>
+              <X size={20} aria-hidden="true" />
+            </button>
+          </div>
+        </header>
+
+        {step === 'book' && (
+          <div className="picker-testament-tabs" role="tablist" aria-label="성경 구분">
+            {['구약', '신약'].map((item) => (
+              <button
+                className={testament === item ? 'is-active' : ''}
+                key={item}
+                type="button"
+                role="tab"
+                aria-selected={testament === item}
+                onClick={() => changeTestament(item)}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {viewMode === 'wheel' ? (
+          <>
+            <PickerWheel
+              items={wheelItems}
+              value={wheelValue}
+              label={step === 'book' ? '성경 Wheel 선택' : `${draftBook.name} 장 Wheel 선택`}
+              onChange={(value) => {
+                if (step === 'book') updateDraftBook(value);
+                else setDraftChapter(Number(value));
+              }}
+            />
+            <button className="picker-confirm-button" type="button" onClick={confirmWheelValue}>
+              {step === 'book' ? '다음' : `${draftBook.name} ${draftChapter}장 열기`}
+            </button>
+          </>
+        ) : (
+          <div className={`picker-grid ${step === 'chapter' ? 'is-chapter-grid' : ''}`}>
+            {(step === 'book' ? visibleBooks : chapters).map((item) => {
+              const value = step === 'book' ? item.id : item;
+              const label = step === 'book' ? item.name : item;
+              const isSelected = step === 'book'
+                ? draftBook.id === value
+                : draftChapter === Number(value);
+              return (
+                <button
+                  className={isSelected ? 'is-selected' : ''}
+                  key={value}
+                  type="button"
+                  onClick={() => chooseGridItem(value)}
+                >
+                  <strong>{label}</strong>
+                  {step === 'chapter' && <span>장</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -902,6 +1199,11 @@ function BibleView({
   const [chapterState, setChapterState] = useState({ status: 'loading', verses: [] });
   const [noteSheet, setNoteSheet] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
+  const [isPassagePickerOpen, setIsPassagePickerOpen] = useState(false);
+  const [recentPassages, setRecentPassages] = useState(() => {
+    const stored = readStoredValue('bibleon.recentPassages', defaultRecentPassages);
+    return Array.isArray(stored) ? stored.slice(0, 7) : defaultRecentPassages;
+  });
   const longPressTimerRef = useRef(null);
   const pressGestureRef = useRef(null);
   const swipeGestureRef = useRef(null);
@@ -947,6 +1249,23 @@ function BibleView({
     : 0;
 
   useEffect(() => {
+    setRecentPassages((current) => {
+      const nextPassage = { bookId: selectedBook.id, chapter: selectedChapter };
+      const next = [
+        nextPassage,
+        ...current.filter((item) => (
+          item.bookId !== nextPassage.bookId || item.chapter !== nextPassage.chapter
+        )),
+      ].slice(0, 7);
+      return next;
+    });
+  }, [selectedBook.id, selectedChapter]);
+
+  useEffect(() => {
+    writeStoredValue('bibleon.recentPassages', recentPassages);
+  }, [recentPassages]);
+
+  useEffect(() => {
     setSelectedVerse(null);
     setSelectedRef(
       activeVerses.length
@@ -955,10 +1274,12 @@ function BibleView({
     );
   }, [activeVerses, selectedBook.name, selectedChapter, setSelectedRef]);
 
-  const changeBook = (bookId) => {
+  const selectPassage = (bookId, chapter) => {
     const nextBook = bibleBooks.find((book) => book.id === bookId) ?? bibleBooks[0];
     setSelectedBookId(bookId);
-    setSelectedChapter(nextBook.chapter);
+    setSelectedChapter(Math.min(nextBook.chapters, Math.max(1, chapter)));
+    setSelectedVerse(null);
+    setNoteSheet(null);
   };
 
   const moveChapter = (direction) => {
@@ -1108,41 +1429,40 @@ function BibleView({
     <div className="page-stack bible-page">
       <section className="recent-reading" aria-label="최근 읽은 성경">
         <div className="recent-reading-list">
-          {bibleBooks.filter((book) => book.progress > 0).slice(0, 3).map((book) => (
-            <button
-              className={`recent-reading-item ${selectedBookId === book.id ? 'is-active' : ''}`}
-              key={book.id}
-              type="button"
-              onClick={() => changeBook(book.id)}
-            >
-              <span>
-                <strong>{book.name} {book.chapter}장</strong>
-                <small>{book.lastRead}</small>
-              </span>
-              <b>{book.progress}%</b>
-            </button>
-          ))}
+          {recentPassages.map((passage) => {
+            const book = bibleBooks.find((item) => item.id === passage.bookId);
+            if (!book) return null;
+            const isActive = selectedBookId === book.id && selectedChapter === passage.chapter;
+            return (
+              <button
+                className={`recent-reading-item ${isActive ? 'is-active' : ''}`}
+                key={`${book.id}-${passage.chapter}`}
+                type="button"
+                onClick={() => selectPassage(book.id, passage.chapter)}
+              >
+                <small>{book.testament}</small>
+                <strong>{book.name}</strong>
+                <span>{passage.chapter}장</span>
+              </button>
+            );
+          })}
         </div>
       </section>
 
       <section className="bible-controls" aria-label="성경 본문 선택">
-        <div className="selector-grid">
+        <button
+          className="passage-picker-trigger"
+          type="button"
+          aria-haspopup="dialog"
+          onClick={() => setIsPassagePickerOpen(true)}
+        >
           <Search className="passage-search-icon" size={18} aria-hidden="true" />
-          <label className="select-control">
-            <select aria-label="성경 선택" value={selectedBookId} onChange={(event) => changeBook(event.target.value)}>
-              {bibleBooks.map((book) => <option key={book.id} value={book.id}>{book.name}</option>)}
-            </select>
-            <ChevronDown size={15} aria-hidden="true" />
-          </label>
-          <label className="select-control chapter-control">
-            <select aria-label="장 선택" value={selectedChapter} onChange={(event) => setSelectedChapter(Number(event.target.value))}>
-              {Array.from({ length: selectedBook.chapters }, (_, index) => index + 1).map((chapter) => (
-                <option key={chapter} value={chapter}>{chapter}장</option>
-              ))}
-            </select>
-            <ChevronDown size={15} aria-hidden="true" />
-          </label>
-        </div>
+          <span>
+            <strong>{selectedBook.name}</strong>
+            <small>{selectedChapter}장</small>
+          </span>
+          <ChevronDown size={16} aria-hidden="true" />
+        </button>
         <div className="translation-tabs" aria-label="성경 번역본 선택">
           {translations.map((translation) => (
             <button
@@ -1158,11 +1478,6 @@ function BibleView({
         </div>
       </section>
 
-      <section className="reading-status">
-        <div><span>이 장의 읽기 기록</span><strong>{chapterReadCount}절 읽음</strong></div>
-        <div className="reading-status-progress"><ProgressBar value={chapterProgress} /><span>{chapterProgress}%</span></div>
-      </section>
-
       <article
         className="reader-surface"
         onPointerDown={handleReaderPointerDown}
@@ -1170,6 +1485,10 @@ function BibleView({
         onPointerUp={handleReaderPointerUp}
         onPointerCancel={cancelReaderGesture}
       >
+        <div className="reader-progress" aria-label={`${chapterProgress}% 읽음`}>
+          <ProgressBar value={chapterProgress} />
+          <span>{chapterProgress}%</span>
+        </div>
         <header className="reader-header">
           <div>
             <span>{selectedTranslation} · {translations.find((item) => item.id === selectedTranslation)?.label}</span>
@@ -1268,6 +1587,18 @@ function BibleView({
           </span>
         </div>
       </article>
+
+      {isPassagePickerOpen && (
+        <PassagePickerSheet
+          selectedBookId={selectedBookId}
+          selectedChapter={selectedChapter}
+          onClose={() => setIsPassagePickerOpen(false)}
+          onSelect={(bookId, chapter) => {
+            selectPassage(bookId, chapter);
+            setIsPassagePickerOpen(false);
+          }}
+        />
+      )}
 
       {noteSheet && (
         <div
