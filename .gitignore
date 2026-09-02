@@ -23,6 +23,10 @@ pnpm-debug.log*
 data/rag/raw/*
 !data/rag/raw/.gitkeep
 
+# Rebuilt RAG documents contain licensed Bible text and local graph data.
+data/rag/derived/
+data/rag/.derived-*/
+
 # Licensed Korean Bible text generated from the approved KBS source.
 # Keep the corpus out of Git unless the written license explicitly allows
 # source-repository redistribution. The downloader recreates these files.
