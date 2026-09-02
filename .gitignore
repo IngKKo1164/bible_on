@@ -1,6 +1,9 @@
 node_modules/
 dist/
 
+# Licensed Bible corpus is a local runtime cache.
+public/data/bible/**/*.json
+
 # Local environment files
 .env
 .env.*
