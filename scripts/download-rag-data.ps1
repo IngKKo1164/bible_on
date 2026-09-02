@@ -135,6 +135,18 @@ Download-File `
   -Destination $crossReferenceArchive
 Expand-DataArchive -Archive $crossReferenceArchive -Destination $crossReferenceDestination
 
+$topicScoresArchive = Join-Path $archiveRoot "openbible-topic-scores.zip"
+$topicDestination = Join-Path $rawRoot "topics\openbible"
+Download-File `
+  -Uri "https://a.openbible.info/data/topic-scores.zip" `
+  -Destination $topicScoresArchive
+Expand-DataArchive -Archive $topicScoresArchive -Destination $topicDestination
+
+$topicVotesFile = Join-Path $topicDestination "topic-votes.txt"
+Download-File `
+  -Uri "https://a.openbible.info/data/topic-votes.txt" `
+  -Destination $topicVotesFile
+
 $otBookFiles = @(
   Get-ChildItem -LiteralPath $otDestination -Recurse -Filter "*.xml" |
     Where-Object { $_.DirectoryName -match '[\\/]wlc$' -and $_.Name -ne "VerseMap.xml" }
@@ -168,12 +180,36 @@ if ($crossReferenceRows -lt 300000) {
   throw "OpenBible validation failed: expected more than 300,000 relationships, found $crossReferenceRows."
 }
 
+$topicScoresFile = Join-Path $topicDestination "topic-scores.txt"
+if (-not (Test-Path -LiteralPath $topicScoresFile)) {
+  throw "OpenBible validation failed: topic-scores.txt was not extracted."
+}
+$topicScoreHeader = Get-Content -LiteralPath $topicScoresFile -TotalCount 1
+if ($topicScoreHeader -notmatch "^Topic\tOSIS\tQuality Score") {
+  throw "OpenBible validation failed: the topic-score header is not recognized."
+}
+$topicScoreRows = (Get-Content -LiteralPath $topicScoresFile | Measure-Object -Line).Lines - 1
+if ($topicScoreRows -lt 50000) {
+  throw "OpenBible validation failed: expected more than 50,000 topic scores, found $topicScoreRows."
+}
+
+if (-not (Test-Path -LiteralPath $topicVotesFile)) {
+  throw "OpenBible validation failed: topic-votes.txt was not downloaded."
+}
+$topicVoteHeader = Get-Content -LiteralPath $topicVotesFile -TotalCount 1
+$topicVoteRows = (Get-Content -LiteralPath $topicVotesFile | Measure-Object -Line).Lines - 1
+if ($topicVoteRows -lt 100000) {
+  throw "OpenBible validation failed: expected more than 100,000 topic votes, found $topicVoteRows."
+}
+
 $artifacts = @(
   $otArchive,
   $ntCsv,
   $ntReadme,
   $stepBibleArchive,
-  $crossReferenceArchive
+  $crossReferenceArchive,
+  $topicScoresArchive,
+  $topicVotesFile
 ) | ForEach-Object {
   $file = Get-Item -LiteralPath $_
   [ordered]@{
@@ -208,6 +244,11 @@ $manifest = [ordered]@{
       id = "openbible-cross-references"
       source = "https://www.openbible.info/labs/cross-references/"
       license = "CC BY 4.0"
+    },
+    [ordered]@{
+      id = "openbible-topics"
+      source = "https://www.openbible.info/topics/"
+      license = "CC BY 4.0"
     }
   )
   validation = [ordered]@{
@@ -217,6 +258,10 @@ $manifest = [ordered]@{
     stepBibleTagntFiles = $stepTagntFiles.Count
     stepBibleTahotFiles = $stepTahotFiles.Count
     openBibleCrossReferenceRows = $crossReferenceRows
+    openBibleTopicScoreRows = $topicScoreRows
+    openBibleTopicVoteRows = $topicVoteRows
+    openBibleTopicScoreHeader = $topicScoreHeader
+    openBibleTopicVoteHeader = $topicVoteHeader
   }
   artifacts = $artifacts
 }

@@ -11,11 +11,13 @@
     "data:validate": "node scripts/validate-bible-data.mjs",
     "data:rag-build": "node scripts/build-rag-corpus.mjs",
     "data:rag-validate": "node scripts/validate-rag-corpus.mjs",
+    "data:rag-metadata": "node scripts/build-rag-metadata.mjs",
+    "data:rag-metadata-validate": "node scripts/validate-rag-metadata.mjs",
     "data:rag-index": "node scripts/build-rag-search-index.mjs",
     "data:rag-index-validate": "node scripts/validate-rag-search-index.mjs",
     "rag:query": "node scripts/query-rag.mjs",
     "rag:evaluate": "node scripts/evaluate-rag-retrieval.mjs",
-    "test:rag": "node --test scripts/tests/rag-corpus.test.mjs scripts/tests/search-text.test.mjs",
+    "test:rag": "node --test scripts/tests/rag-corpus.test.mjs scripts/tests/rag-metadata.test.mjs scripts/tests/search-text.test.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

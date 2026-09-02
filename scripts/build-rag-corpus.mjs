@@ -192,6 +192,7 @@ async function buildCrossReferenceGraph(outputPath, availableCanonicalIds) {
       await writeJsonLine(output, {
         schemaVersion: 1,
         type: 'cross_reference',
+        relationType: 'editorial_cross_reference',
         id: `openbible:${stats.edges + 1}`,
         from: compactReference(from),
         to: compactReference(to),
@@ -263,7 +264,7 @@ async function build() {
         atomicUnit: 'canonical_verse',
         passageBoundary: 'chapter_and_source_heading',
         artificialTokenBoundary: false,
-        crossReferences: 'weighted_canonical_range_edges',
+        crossReferences: 'typed_weighted_canonical_range_edges',
         graphExpansion: 'one_hop_initial_retrieval',
       },
       inputs: {

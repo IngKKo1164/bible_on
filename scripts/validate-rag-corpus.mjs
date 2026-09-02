@@ -167,6 +167,7 @@ async function validateCrossReferences(filePath, availableCanonicalIds) {
 
   for await (const edge of readJsonLines(filePath)) {
     assert(edge.schemaVersion === 1 && edge.type === 'cross_reference', `${edge.id}: invalid edge schema`);
+    assert(edge.relationType === 'editorial_cross_reference', `${edge.id}: invalid relation type`);
     assert(edge.id && !ids.has(edge.id), `${edge.id}: duplicate edge ID`);
     assert(Number.isInteger(edge.votes), `${edge.id}: invalid vote count`);
     assert(edge.active === (edge.votes > 0), `${edge.id}: active flag does not match votes`);

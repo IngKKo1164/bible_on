@@ -26,6 +26,8 @@ data/rag/raw/*
 # Rebuilt RAG documents contain licensed Bible text and local graph data.
 data/rag/derived/
 data/rag/.derived-*/
+data/rag/metadata/
+data/rag/.metadata-*/
 
 # Locally generated retrieval indexes and downloaded embedding models.
 data/rag/index/
