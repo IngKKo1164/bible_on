@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Bell,
@@ -6,6 +6,7 @@ import {
   Bookmark,
   Camera,
   Check,
+  Circle,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -15,11 +16,13 @@ import {
   Highlighter,
   Home,
   List,
+  Menu,
   MessageCircle,
   MoreHorizontal,
   NotebookPen,
   PenLine,
   Play,
+  Plus,
   Search,
   Send,
   Settings,
@@ -27,13 +30,16 @@ import {
   Sparkles,
   Star,
   ThumbsUp,
+  Trash2,
+  Underline,
   UserPlus,
   UserRound,
   Users,
+  Waves,
   X,
 } from 'lucide-react';
 import { BibleOnLogo, BibleBookIcon as BookOpen, ChurchCrossIcon as Church, SixteenthNoteIcon } from './brandIcons';
-import { bibleCatalog, loadKrvChapter } from './bibleData';
+import { bibleCatalog, loadKrvChapter, preloadKrvBible } from './bibleData';
 import OnboardingApp from './OnboardingApp';
 import './styles.css';
 
@@ -301,6 +307,22 @@ const churchDirectoryMembers = [
   },
 ];
 
+const highlightMethodOptions = [
+  { id: 'underline', label: '밑줄', icon: Underline },
+  { id: 'wave', label: '물결', icon: Waves },
+  { id: 'circle', label: '동그라미', icon: Circle },
+  { id: 'marker', label: '형광펜', icon: Highlighter },
+];
+
+const highlightColorOptions = [
+  { id: 'red', label: '빨간색' },
+  { id: 'yellow', label: '노란색' },
+  { id: 'green', label: '초록색' },
+  { id: 'blue', label: '파란색' },
+];
+
+const defaultHighlightStyle = { method: 'marker', color: 'yellow' };
+
 const churchMessageMembers = [
   ...initialChurchConversations.map((conversation, index) => ({
     id: conversation.id,
@@ -322,13 +344,18 @@ function getConversationParticipants(participantIds) {
     .sort((first, second) => first.name.localeCompare(second.name, 'ko-KR'));
 }
 
-function getConversationDetails(participantIds) {
+function getConversationDetails(participantIds, customName = '') {
   const participants = getConversationParticipants(participantIds);
   const firstParticipant = participants[0];
   const isGroup = participants.length > 1;
+  const normalizedCustomName = isGroup ? customName.trim() : '';
+  const automaticName = isGroup
+    ? `${firstParticipant.name} 외 ${participants.length - 1}명`
+    : (firstParticipant?.name ?? '대화방');
 
   return {
-    name: isGroup ? `${firstParticipant.name} 외 ${participants.length - 1}명` : (firstParticipant?.name ?? '대화방'),
+    name: normalizedCustomName || automaticName,
+    customName: normalizedCustomName,
     department: isGroup ? '단체 채팅' : (firstParticipant?.department ?? churchInfo.department),
     role: isGroup ? `${participants.length}명` : (firstParticipant?.role ?? '교인'),
   };
@@ -359,10 +386,89 @@ function writeStoredValue(key, value) {
   }
 }
 
+function normalizeVerseHighlights(stored) {
+  if (Array.isArray(stored)) {
+    return Object.fromEntries(stored.map((verseId) => [verseId, { ...defaultHighlightStyle }]));
+  }
+  if (!stored || typeof stored !== 'object') return {};
+  return Object.fromEntries(Object.entries(stored).map(([verseId, style]) => (
+    [verseId, normalizeHighlightStyle(style)]
+  )));
+}
+
+function normalizeHighlightStyle(stored) {
+  const storedMethod = stored?.method === 'pencil' ? 'wave' : stored?.method;
+  const methodExists = highlightMethodOptions.some(({ id }) => id === storedMethod);
+  const colorExists = highlightColorOptions.some(({ id }) => id === stored?.color);
+  return {
+    method: methodExists ? storedMethod : defaultHighlightStyle.method,
+    color: colorExists ? stored.color : defaultHighlightStyle.color,
+  };
+}
+
+const HOME_CHAT_STORAGE_KEY = 'bibleon.homeChatRoomsV1';
+const HOME_CHAT_ACTIVE_KEY = 'bibleon.activeHomeChatV1';
+const HOME_CHAT_LEGACY_KEY = 'bibleon.homeTestMessagesV2';
+const HOME_CHAT_DELETE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+function makeHomeChatTitle(messages) {
+  const firstQuestion = messages.find(({ role }) => role === 'user')?.text?.trim() ?? '';
+  if (!firstQuestion) return '새 대화';
+  return firstQuestion.length > 30 ? `${firstQuestion.slice(0, 30)}...` : firstQuestion;
+}
+
+function purgeExpiredHomeChats(rooms, now = Date.now()) {
+  return rooms.filter((room) => (
+    !room.deletedAt || now - room.deletedAt < HOME_CHAT_DELETE_RETENTION_MS
+  ));
+}
+
+function loadHomeChatRooms() {
+  const storedRooms = readStoredValue(HOME_CHAT_STORAGE_KEY, null);
+  if (Array.isArray(storedRooms)) return purgeExpiredHomeChats(storedRooms);
+
+  const legacyMessages = readStoredValue(HOME_CHAT_LEGACY_KEY, []);
+  if (!Array.isArray(legacyMessages) || legacyMessages.length === 0) return [];
+
+  const createdAt = Date.now();
+  return [{
+    id: `home-chat-migrated-${createdAt}`,
+    title: makeHomeChatTitle(legacyMessages),
+    messages: legacyMessages,
+    createdAt,
+    updatedAt: createdAt,
+    deletedAt: null,
+  }];
+}
+
+function formatHomeChatTime(timestamp) {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDifference = Math.round((startOfToday - startOfDate) / (24 * 60 * 60 * 1000));
+
+  if (dayDifference === 0) {
+    return date.toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' });
+  }
+  if (dayDifference === 1) return '어제';
+  return date.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
+}
+
 function App() {
   const workspaceRef = useRef(null);
+  const initialHomeChatRoomsRef = useRef(null);
+  if (initialHomeChatRoomsRef.current === null) {
+    initialHomeChatRoomsRef.current = loadHomeChatRooms();
+  }
   const [isAppLoading, setIsAppLoading] = useState(true);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingError, setLoadingError] = useState('');
+  const [loadingAttempt, setLoadingAttempt] = useState(0);
   const [isHomeIntro, setIsHomeIntro] = useState(true);
+  const [isHomeGradientVisible, setIsHomeGradientVisible] = useState(false);
+  const [isHomeSearchFlashing, setIsHomeSearchFlashing] = useState(false);
+  const [isHomeReturning, setIsHomeReturning] = useState(false);
   const [activeTab, setActiveTab] = useState('home');
   const [selectedBookId, setSelectedBookId] = useState('philippians');
   const [selectedChapter, setSelectedChapter] = useState(4);
@@ -380,29 +486,82 @@ function App() {
   const [posts, setPosts] = useState(communityPosts);
   const [conversations, setConversations] = useState(initialChurchConversations);
   const [isHomeChatOpen, setIsHomeChatOpen] = useState(false);
-  const [homeRagMessages, setHomeRagMessages] = useState(() => (
-    readStoredValue('bibleon.homeTestMessagesV2', [])
-  ));
+  const [homeChatHistoryOpen, setHomeChatHistoryOpen] = useState(false);
+  const [homeChatRooms, setHomeChatRooms] = useState(() => initialHomeChatRoomsRef.current);
+  const [activeHomeChatId, setActiveHomeChatId] = useState(() => {
+    const storedActiveId = readStoredValue(HOME_CHAT_ACTIVE_KEY, '');
+    const availableRooms = initialHomeChatRoomsRef.current.filter(({ deletedAt }) => !deletedAt);
+    return availableRooms.some(({ id }) => id === storedActiveId)
+      ? storedActiveId
+      : (availableRooms[0]?.id ?? '');
+  });
   const [personalProfile, setPersonalProfile] = useState(() => ({
     ...defaultPersonalProfile,
     ...readStoredValue('bibleon.personalProfile', {}),
   }));
   const [verseNotes, setVerseNotes] = useState(() => readStoredValue('bibleon.verseNotes', {}));
-  const [highlightedVerseIds, setHighlightedVerseIds] = useState(() =>
-    readStoredValue('bibleon.highlightedVerses', [])
-  );
+  const [verseHighlights, setVerseHighlights] = useState(() => (
+    normalizeVerseHighlights(readStoredValue('bibleon.highlightedVerses', {}))
+  ));
+  const [lastHighlightStyle, setLastHighlightStyle] = useState(() => (
+    normalizeHighlightStyle(readStoredValue('bibleon.lastHighlightStyle', defaultHighlightStyle))
+  ));
 
   const selectedBook = bibleBooks.find((book) => book.id === selectedBookId) ?? bibleBooks[0];
+  const activeHomeChat = homeChatRooms.find((room) => (
+    room.id === activeHomeChatId && !room.deletedAt
+  ));
+  const homeRagMessages = activeHomeChat?.messages ?? [];
 
   useEffect(() => {
-    const timerId = window.setTimeout(() => setIsAppLoading(false), 1050);
-    return () => window.clearTimeout(timerId);
-  }, []);
+    let active = true;
+
+    const preloadBible = async () => {
+      setIsAppLoading(true);
+      setLoadingError('');
+      setLoadingProgress(0);
+      const startedAt = Date.now();
+
+      try {
+        await preloadKrvBible((completed, total) => {
+          if (active) setLoadingProgress(Math.round((completed / total) * 100));
+        });
+        const remainingMinimumTime = Math.max(0, 700 - (Date.now() - startedAt));
+        if (remainingMinimumTime > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, remainingMinimumTime));
+        }
+        if (!active) return;
+        setLoadingProgress(100);
+        await new Promise((resolve) => window.setTimeout(resolve, 220));
+        if (active) setIsAppLoading(false);
+      } catch {
+        if (active) setLoadingError('성경 본문을 불러오지 못했어요.');
+      }
+    };
+
+    preloadBible();
+    return () => { active = false; };
+  }, [loadingAttempt]);
 
   useEffect(() => {
     if (isAppLoading) return undefined;
-    const timerId = window.setTimeout(() => setIsHomeIntro(false), 200);
-    return () => window.clearTimeout(timerId);
+    const flashTimerId = window.setTimeout(() => setIsHomeSearchFlashing(true), 0);
+    const revealTimerId = window.setTimeout(() => {
+      setIsHomeSearchFlashing(false);
+      setIsHomeGradientVisible(true);
+    }, 500);
+    const returnTimerId = window.setTimeout(() => {
+      setIsHomeIntro(false);
+      setIsHomeReturning(true);
+    }, 2000);
+    const settleTimerId = window.setTimeout(() => setIsHomeReturning(false), 3000);
+
+    return () => {
+      window.clearTimeout(flashTimerId);
+      window.clearTimeout(revealTimerId);
+      window.clearTimeout(returnTimerId);
+      window.clearTimeout(settleTimerId);
+    };
   }, [isAppLoading]);
 
   const selectBiblePassage = (bookId = selectedBookId, chapter = selectedChapter) => {
@@ -439,16 +598,94 @@ function App() {
   }, [verseNotes]);
 
   useEffect(() => {
-    writeStoredValue('bibleon.highlightedVerses', highlightedVerseIds);
-  }, [highlightedVerseIds]);
+    writeStoredValue('bibleon.highlightedVerses', verseHighlights);
+  }, [verseHighlights]);
+
+  useEffect(() => {
+    writeStoredValue('bibleon.lastHighlightStyle', lastHighlightStyle);
+  }, [lastHighlightStyle]);
 
   useEffect(() => {
     writeStoredValue('bibleon.personalProfile', personalProfile);
   }, [personalProfile]);
 
   useEffect(() => {
-    writeStoredValue('bibleon.homeTestMessagesV2', homeRagMessages);
-  }, [homeRagMessages]);
+    writeStoredValue(HOME_CHAT_STORAGE_KEY, homeChatRooms);
+    writeStoredValue(HOME_CHAT_ACTIVE_KEY, activeHomeChatId);
+    try {
+      window.localStorage.removeItem(HOME_CHAT_LEGACY_KEY);
+    } catch {
+      // The migrated chat remains available in the current session when storage is unavailable.
+    }
+  }, [activeHomeChatId, homeChatRooms]);
+
+  useEffect(() => {
+    const purgeDeletedRooms = () => {
+      setHomeChatRooms((current) => {
+        const retained = purgeExpiredHomeChats(current);
+        return retained.length === current.length ? current : retained;
+      });
+    };
+    const intervalId = window.setInterval(purgeDeletedRooms, 60 * 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  const prepareHomeChat = (firstQuestion, forceNew = false) => {
+    const currentRoom = homeChatRooms.find((room) => (
+      room.id === activeHomeChatId && !room.deletedAt
+    ));
+    if (currentRoom && !forceNew) return currentRoom.id;
+
+    const createdAt = Date.now();
+    const roomId = `home-chat-${createdAt}`;
+    const room = {
+      id: roomId,
+      title: makeHomeChatTitle([{ role: 'user', text: firstQuestion }]),
+      messages: [],
+      createdAt,
+      updatedAt: createdAt,
+      deletedAt: null,
+    };
+    setHomeChatRooms((current) => [room, ...current]);
+    setActiveHomeChatId(roomId);
+    return roomId;
+  };
+
+  const appendHomeChatMessage = (roomId, message) => {
+    setHomeChatRooms((current) => current.map((room) => {
+      if (room.id !== roomId) return room;
+      const messages = [...room.messages, message];
+      return {
+        ...room,
+        title: makeHomeChatTitle(messages),
+        messages,
+        updatedAt: Date.now(),
+      };
+    }));
+  };
+
+  const openSavedHomeChat = (roomId) => {
+    setActiveHomeChatId(roomId);
+    setActiveTab('home');
+    setIsHomeChatOpen(true);
+  };
+
+  const startNewHomeChat = () => {
+    setActiveHomeChatId('');
+    setActiveTab('home');
+    setIsHomeChatOpen(true);
+  };
+
+  const deleteHomeChat = (roomId) => {
+    const deletedAt = Date.now();
+    setHomeChatRooms((current) => current.map((room) => (
+      room.id === roomId ? { ...room, deletedAt } : room
+    )));
+    if (activeHomeChatId === roomId) {
+      const nextRoom = homeChatRooms.find((room) => room.id !== roomId && !room.deletedAt);
+      setActiveHomeChatId(nextRoom?.id ?? '');
+    }
+  };
 
   const addQtPost = () => {
     const text = newPost.trim();
@@ -463,17 +700,33 @@ function App() {
   const showHomeIntro = activeTab === 'home' && isHomeIntro;
 
   return (
-    <main className={`app-shell ${showHomeIntro ? 'is-home-intro' : ''}`} aria-busy={isAppLoading}>
+    <main
+      className={`app-shell ${showHomeIntro ? 'is-home-intro' : ''} ${!isHomeGradientVisible ? 'is-home-gradient-hidden' : ''} ${isHomeSearchFlashing ? 'is-home-search-flashing' : ''} ${isHomeReturning ? 'is-home-returning' : ''} ${activeTab === 'home' && isHomeChatOpen ? 'is-home-chatting' : ''}`}
+      aria-busy={isAppLoading}
+    >
       {isAppLoading && (
-        <div className="app-loading-screen" role="status" aria-label="바이블온 불러오는 중">
-          <BibleOnLogo className="app-loading-logo" variant="white" size={120} aria-hidden="true" />
-          <span className="app-loading-progress" aria-hidden="true"><i /></span>
+        <div
+          className="app-loading-screen"
+          role="status"
+          aria-label={`성경 본문 불러오는 중 ${loadingProgress}%`}
+        >
+          <div className="app-loading-logo-stack" style={{ '--loading-progress': `${loadingProgress}%` }} aria-hidden="true">
+            <BibleOnLogo className="app-loading-logo-base" size={132} />
+            <span className="app-loading-logo-fill"><BibleOnLogo size={132} /></span>
+          </div>
+          {loadingError && (
+            <div className="app-loading-error">
+              <span>{loadingError}</span>
+              <button type="button" onClick={() => setLoadingAttempt((current) => current + 1)}>다시 시도</button>
+            </div>
+          )}
         </div>
       )}
       <section className="workspace" aria-label="바이블온 앱" ref={workspaceRef}>
         <Topbar
           selectedTranslation={selectedTranslation}
           setSelectedTranslation={setSelectedTranslation}
+          onOpenChatHistory={() => setHomeChatHistoryOpen(true)}
         />
         {activeTab === 'home' && (
           <HomeView
@@ -485,12 +738,15 @@ function App() {
             selectBiblePassage={selectBiblePassage}
             continueCurrentReading={continueCurrentReading}
             favoriteRefs={favoriteRefs}
+            chatRooms={homeChatRooms.filter(({ deletedAt }) => !deletedAt)}
+            activeChatId={activeHomeChatId}
             ragMessages={homeRagMessages}
-            setRagMessages={setHomeRagMessages}
             isChatOpen={isHomeChatOpen}
             isIntro={showHomeIntro}
             openChat={() => setIsHomeChatOpen(true)}
             closeChat={closeHomeChat}
+            prepareChat={prepareHomeChat}
+            appendChatMessage={appendHomeChatMessage}
           />
         )}
         {activeTab === 'bible' && (
@@ -507,8 +763,10 @@ function App() {
             setReadVerseIds={setReadVerseIds}
             verseNotes={verseNotes}
             setVerseNotes={setVerseNotes}
-            highlightedVerseIds={highlightedVerseIds}
-            setHighlightedVerseIds={setHighlightedVerseIds}
+            verseHighlights={verseHighlights}
+            setVerseHighlights={setVerseHighlights}
+            lastHighlightStyle={lastHighlightStyle}
+            setLastHighlightStyle={setLastHighlightStyle}
           />
         )}
         {activeTab === 'church' && (
@@ -532,12 +790,24 @@ function App() {
           />
         )}
       </section>
-      <BottomNav activeTab={activeTab} onSelectTab={selectTab} />
+      <HomeChatHistory
+        isOpen={homeChatHistoryOpen}
+        chatRooms={homeChatRooms.filter(({ deletedAt }) => !deletedAt)}
+        activeChatId={activeHomeChatId}
+        onClose={() => setHomeChatHistoryOpen(false)}
+        onOpenChat={openSavedHomeChat}
+        onStartNewChat={startNewHomeChat}
+        onDeleteChat={deleteHomeChat}
+      />
+      <BottomNav
+        activeTab={activeTab === 'home' && isHomeChatOpen ? null : activeTab}
+        onSelectTab={selectTab}
+      />
     </main>
   );
 }
 
-function Topbar({ selectedTranslation, setSelectedTranslation }) {
+function Topbar({ selectedTranslation, setSelectedTranslation, onOpenChatHistory }) {
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notifications, setNotifications] = useState(initialRecentNotifications);
@@ -556,9 +826,24 @@ function Topbar({ selectedTranslation, setSelectedTranslation }) {
     setSettingsOpen(true);
   };
 
+  const openChatHistory = () => {
+    setNotificationOpen(false);
+    setSettingsOpen(false);
+    onOpenChatHistory();
+  };
+
   return (
     <>
       <header className="topbar">
+        <button
+          className="icon-button topbar-history-button"
+          type="button"
+          aria-label="지난 대화 열기"
+          title="지난 대화"
+          onClick={openChatHistory}
+        >
+          <Menu size={21} aria-hidden="true" />
+        </button>
         <div className="topbar-actions">
           <div className="topbar-action-wrap">
             <button
@@ -747,6 +1032,100 @@ function NotificationSwipeItem({ notification, onRead, onDelete }) {
   );
 }
 
+function HomeChatHistory({
+  isOpen,
+  chatRooms,
+  activeChatId,
+  onClose,
+  onOpenChat,
+  onStartNewChat,
+  onDeleteChat,
+}) {
+  const [pendingDeleteId, setPendingDeleteId] = useState('');
+  const sortedChatRooms = useMemo(() => (
+    [...chatRooms].sort((first, second) => second.updatedAt - first.updatedAt)
+  ), [chatRooms]);
+  const pendingDeleteRoom = chatRooms.find(({ id }) => id === pendingDeleteId);
+
+  useEffect(() => {
+    if (!isOpen) setPendingDeleteId('');
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="home-chat-history-layer">
+      <button className="home-chat-history-backdrop" type="button" aria-label="지난 대화 닫기" onClick={onClose} />
+      <aside className="home-chat-history" aria-label="지난 대화">
+        <header>
+          <div><Menu size={20} aria-hidden="true" /><h2>지난 대화</h2></div>
+          <div>
+            <button
+              type="button"
+              aria-label="새 대화"
+              title="새 대화"
+              onClick={() => {
+                onStartNewChat();
+                onClose();
+              }}
+            >
+              <Plus size={20} aria-hidden="true" />
+            </button>
+            <button type="button" aria-label="지난 대화 닫기" onClick={onClose}>
+              <X size={20} aria-hidden="true" />
+            </button>
+          </div>
+        </header>
+
+        <div className="home-chat-history-list">
+          {sortedChatRooms.map((room) => (
+            <div className={`home-chat-history-row ${room.id === activeChatId ? 'is-active' : ''}`} key={room.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenChat(room.id);
+                  onClose();
+                }}
+              >
+                <strong>{room.title}</strong>
+                <span>{formatHomeChatTime(room.updatedAt)}</span>
+              </button>
+              <button type="button" aria-label={`${room.title} 삭제`} onClick={() => setPendingDeleteId(room.id)}>
+                <Trash2 size={17} aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+          {sortedChatRooms.length === 0 && (
+            <div className="home-chat-history-empty">
+              <MessageCircle size={24} aria-hidden="true" />
+              <p>아직 저장된 대화가 없어요.</p>
+            </div>
+          )}
+        </div>
+
+        {pendingDeleteRoom && (
+          <div className="home-chat-delete-confirm" role="alertdialog" aria-modal="true" aria-labelledby="home-chat-delete-title">
+            <strong id="home-chat-delete-title">이 대화를 삭제할까요?</strong>
+            <p>목록에서 즉시 사라지며 30일 후 완전히 삭제됩니다.</p>
+            <div>
+              <button type="button" onClick={() => setPendingDeleteId('')}>취소</button>
+              <button
+                type="button"
+                onClick={() => {
+                  onDeleteChat(pendingDeleteRoom.id);
+                  setPendingDeleteId('');
+                }}
+              >
+                삭제
+              </button>
+            </div>
+          </div>
+        )}
+      </aside>
+    </div>
+  );
+}
+
 function BottomNav({ activeTab, onSelectTab }) {
   return (
     <nav className="bottom-nav" aria-label="하단 메뉴">
@@ -780,12 +1159,15 @@ function HomeView({
   selectBiblePassage,
   continueCurrentReading,
   favoriteRefs,
+  chatRooms,
+  activeChatId,
   ragMessages,
-  setRagMessages,
   isChatOpen,
   isIntro,
   openChat,
   closeChat,
+  prepareChat,
+  appendChatMessage,
 }) {
   const [question, setQuestion] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -795,6 +1177,7 @@ function HomeView({
   const searchContainerRef = useRef(null);
   const questionInputRef = useRef(null);
   const swipeGestureRef = useRef(null);
+  const activeChatTitle = chatRooms.find(({ id }) => id === activeChatId)?.title ?? '새 대화';
 
   useEffect(() => {
     if (!isChatOpen) return;
@@ -813,6 +1196,7 @@ function HomeView({
   }, [question]);
 
   useEffect(() => {
+    const observedSearch = searchContainerRef.current;
     const syncHomeLayout = () => {
       const page = homePageRef.current;
       const cluster = homeContentClusterRef.current;
@@ -826,37 +1210,76 @@ function HomeView({
       page.style.setProperty('--home-chat-height', `${availableHeight}px`);
       page.style.setProperty('--home-cluster-shift', `${clusterShift}px`);
       page.style.setProperty('--home-composer-height', `${search.offsetHeight}px`);
+
+      const shell = page.closest('.app-shell');
+      const searchBar = search.querySelector('.home-rag-search') ?? search;
+      if (shell) {
+        const shellRect = shell.getBoundingClientRect();
+        const searchRect = searchBar.getBoundingClientRect();
+        shell.style.setProperty(
+          '--app-gradient-center-x',
+          `${searchRect.left + searchRect.width / 2 - shellRect.left}px`
+        );
+        shell.style.setProperty(
+          '--app-gradient-center-y',
+          `${searchRect.top + searchRect.height / 2 - shellRect.top}px`
+        );
+        const outlineTop = searchRect.top - shellRect.top;
+        const outlineRight = shellRect.right - searchRect.right;
+        const outlineBottom = shellRect.bottom - searchRect.bottom;
+        const outlineLeft = searchRect.left - shellRect.left;
+        shell.style.setProperty('--app-search-outline-top', `${outlineTop}px`);
+        shell.style.setProperty('--app-search-outline-right', `${outlineRight}px`);
+        shell.style.setProperty('--app-search-outline-bottom', `${outlineBottom}px`);
+        shell.style.setProperty('--app-search-outline-left', `${outlineLeft}px`);
+        shell.style.setProperty('--app-search-outline-radius', `${searchRect.height / 2}px`);
+        shell.style.setProperty(
+          '--app-gradient-max-spread',
+          `${Math.max(outlineTop, outlineRight, outlineBottom, outlineLeft) + 32}px`
+        );
+      }
     };
 
     syncHomeLayout();
-    const frameId = window.requestAnimationFrame(syncHomeLayout);
+    const trackingStartedAt = performance.now();
+    let frameId;
+    const trackMovingSearch = () => {
+      syncHomeLayout();
+      if (performance.now() - trackingStartedAt < 1100) {
+        frameId = window.requestAnimationFrame(trackMovingSearch);
+      }
+    };
+    frameId = window.requestAnimationFrame(trackMovingSearch);
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(syncHomeLayout);
+    if (observedSearch) resizeObserver?.observe(observedSearch);
     window.addEventListener('resize', syncHomeLayout);
     return () => {
       window.cancelAnimationFrame(frameId);
+      resizeObserver?.disconnect();
       window.removeEventListener('resize', syncHomeLayout);
     };
-  }, [isChatOpen, question]);
+  }, [isChatOpen, isIntro, question]);
 
   const askBibleQuestion = async (nextQuestion) => {
     const text = nextQuestion.trim();
     if (!text || isSearching) return;
 
     const userMessage = { id: `question-${Date.now()}`, role: 'user', text };
+    const roomId = prepareChat(text, !isChatOpen);
     openChat();
-    setRagMessages((current) => [...current, userMessage]);
+    appendChatMessage(roomId, userMessage);
     setQuestion('');
     setIsSearching(true);
 
     await new Promise((resolve) => window.setTimeout(resolve, 420));
-    setRagMessages((current) => [
-      ...current,
-      {
-        id: `answer-${Date.now()}`,
-        role: 'assistant',
-        text: 'Test 중입니다.',
-        citations: [],
-      },
-    ]);
+    appendChatMessage(roomId, {
+      id: `answer-${Date.now()}`,
+      role: 'assistant',
+      text: 'Test 중입니다.',
+      citations: [],
+    });
     setIsSearching(false);
   };
 
@@ -975,9 +1398,7 @@ function HomeView({
       {isChatOpen && (
         <section className="home-rag-chat" aria-label="바이블온 대화" aria-live="polite">
           <div className="home-chat-toolbar">
-            <button type="button" aria-label="새 대화" title="새 대화" onClick={() => setRagMessages([])}>
-              <PenLine size={18} aria-hidden="true" />
-            </button>
+            <strong>{activeChatTitle}</strong>
           </div>
           <div className="home-chat-messages">
             {ragMessages.map((message) => (
@@ -1232,6 +1653,174 @@ function PassagePickerSheet({ selectedBookId, selectedChapter, onClose, onSelect
   );
 }
 
+function roundedPolygonPath(points, radius = 8) {
+  const uniquePoints = points.filter((point, index) => {
+    if (index === 0) return true;
+    const previous = points[index - 1];
+    return Math.abs(point.x - previous.x) > 0.1 || Math.abs(point.y - previous.y) > 0.1;
+  });
+
+  if (uniquePoints.length < 3) return '';
+
+  const moveToward = (from, to, distance) => {
+    const deltaX = to.x - from.x;
+    const deltaY = to.y - from.y;
+    const length = Math.hypot(deltaX, deltaY) || 1;
+    const amount = Math.min(distance, length / 2);
+    return {
+      x: from.x + (deltaX / length) * amount,
+      y: from.y + (deltaY / length) * amount,
+    };
+  };
+  const formatPoint = ({ x, y }) => `${x.toFixed(2)} ${y.toFixed(2)}`;
+
+  return `${uniquePoints.map((point, index) => {
+    const previous = uniquePoints[(index - 1 + uniquePoints.length) % uniquePoints.length];
+    const next = uniquePoints[(index + 1) % uniquePoints.length];
+    const cornerStart = moveToward(point, previous, radius);
+    const cornerEnd = moveToward(point, next, radius);
+    const prefix = index === 0 ? `M ${formatPoint(cornerStart)}` : `L ${formatPoint(cornerStart)}`;
+    return `${prefix} Q ${formatPoint(point)} ${formatPoint(cornerEnd)}`;
+  }).join(' ')} Z`;
+}
+
+function buildConnectedTextOutline(clientRects, parentRect) {
+  const lineTolerance = 3;
+  const lines = [];
+
+  [...clientRects]
+    .filter((rect) => rect.width > 0 && rect.height > 0)
+    .sort((first, second) => first.top - second.top || first.left - second.left)
+    .forEach((rect) => {
+      const normalized = {
+        left: rect.left - parentRect.left,
+        right: rect.right - parentRect.left,
+        top: rect.top - parentRect.top,
+        bottom: rect.bottom - parentRect.top,
+      };
+      const line = lines.find((candidate) => Math.abs(candidate.top - normalized.top) <= lineTolerance);
+
+      if (line) {
+        line.left = Math.min(line.left, normalized.left);
+        line.right = Math.max(line.right, normalized.right);
+        line.top = Math.min(line.top, normalized.top);
+        line.bottom = Math.max(line.bottom, normalized.bottom);
+      } else {
+        lines.push(normalized);
+      }
+    });
+
+  if (!lines.length) return '';
+
+  const paddedLines = lines.map((line) => ({
+    left: line.left - 4,
+    right: line.right + 4,
+    top: line.top - 1.5,
+    bottom: line.bottom + 1.5,
+  }));
+  const firstLine = paddedLines[0];
+  const lastLine = paddedLines[paddedLines.length - 1];
+  const points = [
+    { x: firstLine.left, y: firstLine.top },
+    { x: firstLine.right, y: firstLine.top },
+  ];
+
+  for (let index = 0; index < paddedLines.length - 1; index += 1) {
+    const currentLine = paddedLines[index];
+    const nextLine = paddedLines[index + 1];
+    const transitionY = (currentLine.bottom + nextLine.top) / 2;
+    points.push(
+      { x: currentLine.right, y: transitionY },
+      { x: nextLine.right, y: transitionY },
+    );
+  }
+
+  points.push(
+    { x: lastLine.right, y: lastLine.bottom },
+    { x: lastLine.left, y: lastLine.bottom },
+  );
+
+  for (let index = paddedLines.length - 2; index >= 0; index -= 1) {
+    const currentLine = paddedLines[index];
+    const nextLine = paddedLines[index + 1];
+    const transitionY = (currentLine.bottom + nextLine.top) / 2;
+    points.push(
+      { x: nextLine.left, y: transitionY },
+      { x: currentLine.left, y: transitionY },
+    );
+  }
+
+  return roundedPolygonPath(points, 8);
+}
+
+function VerseHighlightedText({ text, highlight }) {
+  const textRef = useRef(null);
+  const [circleOutline, setCircleOutline] = useState(null);
+  const isCircle = highlight?.method === 'circle';
+
+  useLayoutEffect(() => {
+    if (!isCircle || !textRef.current) {
+      setCircleOutline(null);
+      return undefined;
+    }
+
+    const textElement = textRef.current;
+    const parentElement = textElement.parentElement;
+    let frameId;
+
+    const measureOutline = () => {
+      const parentRect = parentElement.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(textElement);
+      const path = buildConnectedTextOutline(range.getClientRects(), parentRect);
+      range.detach?.();
+      setCircleOutline({
+        path,
+        width: Math.max(parentRect.width, 1),
+        height: Math.max(parentRect.height, 1),
+      });
+    };
+    const scheduleMeasure = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(measureOutline);
+    };
+
+    scheduleMeasure();
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(scheduleMeasure);
+    resizeObserver?.observe(parentElement);
+    window.addEventListener('resize', scheduleMeasure);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', scheduleMeasure);
+    };
+  }, [isCircle, text]);
+
+  const highlightClassName = highlight && !isCircle
+    ? `is-highlighted highlight-${highlight.method} highlight-${highlight.color}`
+    : '';
+
+  return (
+    <>
+      <span ref={textRef} className={`verse-text ${highlightClassName}`}>{text}</span>
+      {isCircle && circleOutline?.path && (
+        <svg
+          className={`verse-circle-outline highlight-${highlight.color}`}
+          width={circleOutline.width}
+          height={circleOutline.height}
+          viewBox={`0 0 ${circleOutline.width} ${circleOutline.height}`}
+          aria-hidden="true"
+        >
+          <path d={circleOutline.path} />
+        </svg>
+      )}
+    </>
+  );
+}
+
 function BibleView({
   selectedBook,
   selectedBookId,
@@ -1245,15 +1834,19 @@ function BibleView({
   setReadVerseIds,
   verseNotes,
   setVerseNotes,
-  highlightedVerseIds,
-  setHighlightedVerseIds,
+  verseHighlights,
+  setVerseHighlights,
+  lastHighlightStyle,
+  setLastHighlightStyle,
 }) {
   const [selectedVerse, setSelectedVerse] = useState(null);
+  const [highlightPickerVerseId, setHighlightPickerVerseId] = useState('');
+  const [highlightDraft, setHighlightDraft] = useState(lastHighlightStyle);
   const [chapterState, setChapterState] = useState({ status: 'loading', verses: [] });
   const [noteSheet, setNoteSheet] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [isPassagePickerOpen, setIsPassagePickerOpen] = useState(false);
-  const [recentPassages, setRecentPassages] = useState(() => {
+  const [recentPassages] = useState(() => {
     const stored = readStoredValue('bibleon.recentPassages', defaultRecentPassages);
     return Array.isArray(stored) ? stored.slice(0, 7) : defaultRecentPassages;
   });
@@ -1266,6 +1859,7 @@ function BibleView({
   useEffect(() => {
     let isCurrent = true;
     setSelectedVerse(null);
+    setHighlightPickerVerseId('');
     setNoteSheet(null);
 
     if (selectedTranslation === 'RNKSV') {
@@ -1302,21 +1896,17 @@ function BibleView({
     : 0;
 
   useEffect(() => {
-    setRecentPassages((current) => {
-      const nextPassage = { bookId: selectedBook.id, chapter: selectedChapter };
-      const next = [
-        nextPassage,
-        ...current.filter((item) => (
-          item.bookId !== nextPassage.bookId || item.chapter !== nextPassage.chapter
-        )),
-      ].slice(0, 7);
-      return next;
-    });
+    const stored = readStoredValue('bibleon.recentPassages', defaultRecentPassages);
+    const current = Array.isArray(stored) ? stored : defaultRecentPassages;
+    const nextPassage = { bookId: selectedBook.id, chapter: selectedChapter };
+    const next = [
+      nextPassage,
+      ...current.filter((item) => (
+        item.bookId !== nextPassage.bookId || item.chapter !== nextPassage.chapter
+      )),
+    ].slice(0, 7);
+    writeStoredValue('bibleon.recentPassages', next);
   }, [selectedBook.id, selectedChapter]);
-
-  useEffect(() => {
-    writeStoredValue('bibleon.recentPassages', recentPassages);
-  }, [recentPassages]);
 
   useEffect(() => {
     setSelectedVerse(null);
@@ -1332,6 +1922,7 @@ function BibleView({
     setSelectedBookId(bookId);
     setSelectedChapter(Math.min(nextBook.chapters, Math.max(1, chapter)));
     setSelectedVerse(null);
+    setHighlightPickerVerseId('');
     setNoteSheet(null);
   };
 
@@ -1339,6 +1930,7 @@ function BibleView({
     const nextChapter = Math.min(selectedBook.chapters, Math.max(1, selectedChapter + direction));
     if (nextChapter === selectedChapter) return;
     setSelectedVerse(null);
+    setHighlightPickerVerseId('');
     setNoteSheet(null);
     setSelectedChapter(nextChapter);
   };
@@ -1347,10 +1939,30 @@ function BibleView({
     setReadVerseIds((current) => current.includes(verseId) ? current : [...current, verseId]);
   };
 
-  const toggleHighlight = (verseId) => {
-    setHighlightedVerseIds((current) =>
-      current.includes(verseId) ? current.filter((item) => item !== verseId) : [...current, verseId]
-    );
+  const openHighlightPicker = (verseId) => {
+    setHighlightDraft(normalizeHighlightStyle(verseHighlights[verseId] ?? lastHighlightStyle));
+    setHighlightPickerVerseId((current) => current === verseId ? '' : verseId);
+  };
+
+  const handleHighlightButton = (verseId) => {
+    if (!verseHighlights[verseId]) {
+      openHighlightPicker(verseId);
+      return;
+    }
+
+    setVerseHighlights((current) => {
+      const next = { ...current };
+      delete next[verseId];
+      return next;
+    });
+    setHighlightPickerVerseId('');
+  };
+
+  const applyHighlight = (verseId) => {
+    const nextStyle = normalizeHighlightStyle(highlightDraft);
+    setVerseHighlights((current) => ({ ...current, [verseId]: nextStyle }));
+    setLastHighlightStyle(nextStyle);
+    setHighlightPickerVerseId('');
   };
 
   const suppressUpcomingClick = () => {
@@ -1371,6 +1983,7 @@ function BibleView({
 
   const openNoteEditor = (verse) => {
     setSelectedVerse(null);
+    setHighlightPickerVerseId('');
     setNoteDraft(verseNotes[verse.id] ?? '');
     setNoteSheet({ mode: 'edit', verse });
   };
@@ -1420,6 +2033,7 @@ function BibleView({
       suppressClickRef.current = false;
       return;
     }
+    setHighlightPickerVerseId('');
     setSelectedVerse((current) => current === verse.id ? null : verse.id);
     setSelectedRef(verse.ref);
   };
@@ -1470,13 +2084,16 @@ function BibleView({
   }, []);
 
   useEffect(() => {
-    if (!noteSheet) return undefined;
+    if (!noteSheet && !highlightPickerVerseId) return undefined;
     const closeOnEscape = (event) => {
-      if (event.key === 'Escape') setNoteSheet(null);
+      if (event.key === 'Escape') {
+        setNoteSheet(null);
+        setHighlightPickerVerseId('');
+      }
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [noteSheet]);
+  }, [highlightPickerVerseId, noteSheet]);
 
   return (
     <div className="page-stack bible-page">
@@ -1538,19 +2155,21 @@ function BibleView({
         onPointerUp={handleReaderPointerUp}
         onPointerCancel={cancelReaderGesture}
       >
-        <div className="reader-progress" aria-label={`${chapterProgress}% 읽음`}>
-          <ProgressBar value={chapterProgress} />
-          <span>{chapterProgress}%</span>
-        </div>
         <header className="reader-header">
           <div>
             <span>{selectedTranslation} · {translations.find((item) => item.id === selectedTranslation)?.label}</span>
             <h2>{selectedBook.name} {selectedChapter}장</h2>
             <p>{selectedTranslation === 'KRV' ? '개역한글 전문' : '원문 데이터 준비 중'}</p>
           </div>
-          <button className="icon-button small" type="button" aria-label="본문 메뉴" title="본문 메뉴">
-            <MoreHorizontal size={20} aria-hidden="true" />
-          </button>
+          <div className="reader-header-side">
+            <button className="icon-button small" type="button" aria-label="본문 메뉴" title="본문 메뉴">
+              <MoreHorizontal size={20} aria-hidden="true" />
+            </button>
+            <div className="reader-progress" aria-label={`${chapterProgress}% 읽음`}>
+              <ProgressBar value={chapterProgress} />
+              <span>{chapterProgress}%</span>
+            </div>
+          </div>
         </header>
 
         {chapterState.status === 'loading' && (
@@ -1582,10 +2201,11 @@ function BibleView({
             const isRead = readVerseIds.includes(verse.id);
             const isSelected = selectedVerse === verse.id;
             const hasNote = Boolean(verseNotes[verse.id]?.trim());
-            const isHighlighted = highlightedVerseIds.includes(verse.id);
+            const highlight = verseHighlights[verse.id];
+            const isHighlighted = Boolean(highlight);
             return (
               <div
-                className={`verse-wrap ${isSelected ? 'is-selected' : ''} ${isHighlighted ? 'is-highlighted' : ''}`}
+                className={`verse-wrap ${isSelected ? 'is-selected' : ''}`}
                 key={verse.id}
               >
                 <button
@@ -1605,7 +2225,9 @@ function BibleView({
                     {hasNote && <NotebookPen className="verse-note-indicator" size={10} aria-hidden="true" />}
                     <span>{verse.verse}</span>
                   </span>
-                  <span className="verse-copy">{verse.text}</span>
+                  <span className="verse-copy">
+                    <VerseHighlightedText text={verse.text} highlight={highlight} />
+                  </span>
                 </button>
                 {isSelected && (
                   <div className="verse-actions" aria-label={`${verse.ref} 동작`}>
@@ -1613,9 +2235,50 @@ function BibleView({
                     <button className={hasNote ? 'is-on' : ''} type="button" onClick={() => openNoteEditor(verse)}>
                       <NotebookPen size={16} aria-hidden="true" />{hasNote ? '메모 수정' : '메모'}
                     </button>
-                    <button className={isHighlighted ? 'is-on' : ''} type="button" onClick={() => toggleHighlight(verse.id)}>
+                    <button className={isHighlighted ? 'is-on' : ''} type="button" onClick={() => handleHighlightButton(verse.id)}>
                       <Highlighter size={16} aria-hidden="true" />{isHighlighted ? '강조 해제' : '강조'}
                     </button>
+                    {highlightPickerVerseId === verse.id && (
+                      <div className="highlight-popover" role="dialog" aria-label={`${verse.ref} 강조 설정`}>
+                        <div className="highlight-method-row" aria-label="강조 방식">
+                          {highlightMethodOptions.map((option) => {
+                            const MethodIcon = option.icon;
+                            const isActive = highlightDraft.method === option.id;
+                            return (
+                              <button
+                                className={isActive ? 'is-active' : ''}
+                                type="button"
+                                key={option.id}
+                                aria-pressed={isActive}
+                                title={option.label}
+                                onClick={() => setHighlightDraft((current) => ({ ...current, method: option.id }))}
+                              >
+                                <MethodIcon size={15} aria-hidden="true" /><span>{option.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="highlight-color-row" aria-label="강조 색상">
+                          {highlightColorOptions.map((option) => {
+                            const isActive = highlightDraft.color === option.id;
+                            return (
+                              <button
+                                className={`highlight-color-${option.id} ${isActive ? 'is-active' : ''}`}
+                                type="button"
+                                key={option.id}
+                                aria-label={option.label}
+                                aria-pressed={isActive}
+                                title={option.label}
+                                onClick={() => setHighlightDraft((current) => ({ ...current, color: option.id }))}
+                              >
+                                {isActive && <Check size={13} aria-hidden="true" />}
+                              </button>
+                            );
+                          })}
+                          <button className="highlight-apply" type="button" onClick={() => applyHighlight(verse.id)}>적용</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1880,7 +2543,7 @@ function MessageView({ conversations, setConversations }) {
     )));
   };
 
-  const openDraftConversation = (members) => {
+  const openDraftConversation = (members, customName = '') => {
     const participantIds = members
       .map(({ id }) => id)
       .sort((firstId, secondId) => {
@@ -1890,12 +2553,13 @@ function MessageView({ conversations, setConversations }) {
       });
     const conversation = {
       id: `draft-${Date.now()}-${participantIds.join('-')}`,
-      ...getConversationDetails(participantIds),
+      ...getConversationDetails(participantIds, customName),
       online: false,
       unread: 0,
       time: '',
       lastMessage: '',
       participantIds,
+      participantJoinedAt: Object.fromEntries(participantIds.map((id) => [id, 0])),
       messages: [],
       isDraft: true,
     };
@@ -1913,9 +2577,15 @@ function MessageView({ conversations, setConversations }) {
     else openDraftConversation([member]);
   };
 
-  const startGroupConversation = (members) => {
+  const startGroupConversation = (members, customName) => {
     setGroupBuilderOpen(false);
-    openDraftConversation(members);
+    openDraftConversation(members, customName);
+  };
+
+  const createGroupFromConversation = (currentParticipantIds, invitedMembers, customName) => {
+    const currentParticipants = getConversationParticipants(currentParticipantIds);
+    setDraftConversation(null);
+    openDraftConversation([...currentParticipants, ...invitedMembers], customName);
   };
 
   const closeConversation = () => {
@@ -2036,6 +2706,7 @@ function MessageView({ conversations, setConversations }) {
           description="함께 대화할 구성원을 선택하세요"
           candidates={churchMessageMembers}
           minimumSelection={2}
+          roomNameEnabled
           confirmLabel={(count) => `${count}명과 대화 시작`}
           onClose={() => setGroupBuilderOpen(false)}
           onConfirm={startGroupConversation}
@@ -2049,6 +2720,7 @@ function MessageView({ conversations, setConversations }) {
           onBack={closeConversation}
           onPersistDraft={persistDraftConversation}
           onUpdateDraft={setDraftConversation}
+          onCreateGroup={createGroupFromConversation}
         />
       )}
     </div>
@@ -2090,11 +2762,13 @@ function MemberSelectionSheet({
   description,
   candidates,
   minimumSelection = 1,
+  roomNameEnabled = false,
   confirmLabel,
   onClose,
   onConfirm,
 }) {
   const [query, setQuery] = useState('');
+  const [roomName, setRoomName] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
   const normalizedQuery = query.trim().toLowerCase();
   const filteredCandidates = candidates.filter((member) => (
@@ -2119,16 +2793,30 @@ function MemberSelectionSheet({
           <div><h2 id="member-picker-title">{title}</h2><p>{description}</p></div>
           <button type="button" aria-label={`${title} 닫기`} onClick={onClose}><X size={21} aria-hidden="true" /></button>
         </header>
-        <label className="member-picker-search">
-          <Search size={18} aria-hidden="true" />
-          <input
-            aria-label="초대할 구성원 검색"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="이름 또는 부서 검색"
-          />
-          {query && <button type="button" aria-label="검색어 지우기" onClick={() => setQuery('')}><X size={16} /></button>}
-        </label>
+        <div className="member-picker-controls">
+          {roomNameEnabled && (
+            <label className="member-picker-room-name">
+              <span>채팅방 이름 <small>선택</small></span>
+              <input
+                aria-label="단체 채팅방 이름"
+                maxLength={30}
+                value={roomName}
+                onChange={(event) => setRoomName(event.target.value)}
+                placeholder="예: 청년부 예배 준비팀"
+              />
+            </label>
+          )}
+          <label className="member-picker-search">
+            <Search size={18} aria-hidden="true" />
+            <input
+              aria-label="초대할 구성원 검색"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="이름 또는 부서 검색"
+            />
+            {query && <button type="button" aria-label="검색어 지우기" onClick={() => setQuery('')}><X size={16} /></button>}
+          </label>
+        </div>
         <div className="member-picker-list">
           {filteredCandidates.map((member) => {
             const selected = selectedIds.includes(member.id);
@@ -2155,7 +2843,7 @@ function MemberSelectionSheet({
           <button
             type="button"
             disabled={selectedMembers.length < minimumSelection}
-            onClick={() => onConfirm(selectedMembers)}
+            onClick={() => onConfirm(selectedMembers, roomName.trim())}
           >
             {confirmLabel(selectedMembers.length)}
           </button>
@@ -2165,7 +2853,7 @@ function MemberSelectionSheet({
   );
 }
 
-function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, onUpdateDraft }) {
+function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, onUpdateDraft, onCreateGroup }) {
   const [draft, setDraft] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [messageQuery, setMessageQuery] = useState('');
@@ -2180,7 +2868,7 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
   const visibleMessages = normalizedMessageQuery
     ? conversation.messages.filter((message) => message.text.toLowerCase().includes(normalizedMessageQuery))
     : conversation.messages;
-  const roomTitle = getConversationDetails(participantIds).name;
+  const roomTitle = conversation.customName || getConversationDetails(participantIds).name;
 
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus();
@@ -2222,7 +2910,14 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
     setDraft('');
   };
 
-  const inviteParticipants = (selectedMembers) => {
+  const inviteParticipants = (selectedMembers, customName) => {
+    if (participantIds.length === 1) {
+      setInviteOpen(false);
+      setMenuOpen(false);
+      onCreateGroup(participantIds, selectedMembers, customName);
+      return;
+    }
+
     updateConversation((current) => {
       const currentParticipantIds = getConversationParticipantIds(current);
       const nextParticipantIds = [...new Set([
@@ -2230,10 +2925,16 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
         ...selectedMembers.map(({ id }) => id),
       ])];
       const invitedNames = selectedMembers.map(({ name }) => name).join(', ');
+      const joinedAtMessageIndex = current.messages.length;
+      const participantJoinedAt = {
+        ...Object.fromEntries(currentParticipantIds.map((id) => [id, current.participantJoinedAt?.[id] ?? 0])),
+        ...Object.fromEntries(selectedMembers.map(({ id }) => [id, joinedAtMessageIndex])),
+      };
       return {
         ...current,
-        ...getConversationDetails(nextParticipantIds),
+        ...getConversationDetails(nextParticipantIds, current.customName),
         participantIds: nextParticipantIds,
+        participantJoinedAt,
         messages: [
           ...current.messages,
           { id: `${current.id}-invite-${Date.now()}`, from: 'system', text: `${invitedNames}님을 대화에 초대했어요.`, time: '방금' },
@@ -2374,9 +3075,12 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
 
       {inviteOpen && (
         <MemberSelectionSheet
-          title="대화 상대 초대"
-          description="초대할 구성원을 한 번에 선택하세요"
+          title={participantIds.length === 1 ? '새 단체 채팅 만들기' : '대화 상대 초대'}
+          description={participantIds.length === 1
+            ? '현재 대화 내용은 새 채팅방에 포함되지 않아요'
+            : '새 구성원은 초대 이후의 대화만 볼 수 있어요'}
           candidates={inviteCandidates}
+          roomNameEnabled={participantIds.length === 1}
           confirmLabel={(count) => `${count}명 초대`}
           onClose={() => setInviteOpen(false)}
           onConfirm={inviteParticipants}

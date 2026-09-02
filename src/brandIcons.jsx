@@ -1,9 +1,11 @@
 import React from 'react';
 
+const transparentLogoSource = '/assets/brand/bibleon-mark.png';
+
 const logoSources = {
-  app: '/assets/brand/bibleon-app-icon.png',
-  mark: '/assets/brand/bibleon-mark.png',
-  white: '/assets/brand/bibleon-mark-white.png',
+  app: transparentLogoSource,
+  mark: transparentLogoSource,
+  white: transparentLogoSource,
 };
 
 export function BibleOnLogo({ size = 52, variant = 'mark', className = '', alt = '', ...props }) {

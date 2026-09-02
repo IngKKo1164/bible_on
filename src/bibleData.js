@@ -69,20 +69,46 @@ export const bibleCatalog = [
 
 const bookCache = new Map();
 
+async function loadKrvBook(book) {
+  let data = bookCache.get(book.file);
+  if (data) return data;
+
+  const baseUrl = import.meta.env.BASE_URL ?? '/';
+  const response = await fetch(`${baseUrl}data/krv/${book.file}.json`);
+  if (!response.ok) throw new Error(`Failed to load ${book.name}`);
+  data = await response.json();
+  bookCache.set(book.file, data);
+  return data;
+}
+
 export async function loadKrvChapter(bookId, chapterNumber) {
   const book = bibleCatalog.find((item) => item.id === bookId);
   if (!book) throw new Error(`Unknown Bible book: ${bookId}`);
 
-  let data = bookCache.get(book.file);
-  if (!data) {
-    const baseUrl = import.meta.env.BASE_URL ?? '/';
-    const response = await fetch(`${baseUrl}data/krv/${book.file}.json`);
-    if (!response.ok) throw new Error(`Failed to load ${book.name}`);
-    data = await response.json();
-    bookCache.set(book.file, data);
-  }
+  const data = await loadKrvBook(book);
 
   const chapter = data.chapters.find((item) => item.chapter === chapterNumber);
   if (!chapter) throw new Error(`Missing chapter: ${book.name} ${chapterNumber}`);
   return chapter.verses;
+}
+
+export async function preloadKrvBible(onProgress = () => {}, concurrency = 6) {
+  const total = bibleCatalog.length;
+  let completed = 0;
+  let nextBookIndex = 0;
+
+  onProgress(completed, total);
+
+  const loadNextBook = async () => {
+    while (nextBookIndex < total) {
+      const bookIndex = nextBookIndex;
+      nextBookIndex += 1;
+      await loadKrvBook(bibleCatalog[bookIndex]);
+      completed += 1;
+      onProgress(completed, total);
+    }
+  };
+
+  const workerCount = Math.max(1, Math.min(concurrency, total));
+  await Promise.all(Array.from({ length: workerCount }, loadNextBook));
 }
