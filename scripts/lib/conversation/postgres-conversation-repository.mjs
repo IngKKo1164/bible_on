@@ -32,6 +32,47 @@ export function createPostgresConversationRepository({
     application_name: 'bibleon-conversation',
   });
 
+  async function ensureThread({
+    threadId,
+    ownerUserId,
+    title = '',
+    translationId = 'RNKSV',
+  }) {
+    const normalizedThreadId = requireUuid(threadId, 'threadId');
+    const normalizedOwnerUserId = requireValue(ownerUserId, 'ownerUserId');
+    const result = await database.query(`
+      INSERT INTO bibleon.ai_threads (
+        id, owner_user_id, title, translation_id, updated_at
+      ) VALUES ($1, $2, $3, $4, now())
+      ON CONFLICT (id) DO UPDATE SET
+        translation_id = EXCLUDED.translation_id,
+        updated_at = now()
+      WHERE bibleon.ai_threads.owner_user_id = EXCLUDED.owner_user_id
+        AND bibleon.ai_threads.deleted_at IS NULL
+      RETURNING id
+    `, [normalizedThreadId, normalizedOwnerUserId, title.trim(), translationId]);
+    if (result.rowCount !== 1) {
+      throw Object.assign(new Error('Thread ownership check failed.'), { status: 403 });
+    }
+    return result.rows[0];
+  }
+
+  async function assertThreadOwner({ threadId, ownerUserId }) {
+    const normalizedThreadId = requireUuid(threadId, 'threadId');
+    const normalizedOwnerUserId = requireValue(ownerUserId, 'ownerUserId');
+    const result = await database.query(`
+      SELECT id
+      FROM bibleon.ai_threads
+      WHERE id = $1
+        AND owner_user_id = $2
+        AND deleted_at IS NULL
+    `, [normalizedThreadId, normalizedOwnerUserId]);
+    if (result.rowCount !== 1) {
+      throw Object.assign(new Error('Thread ownership check failed.'), { status: 403 });
+    }
+    return result.rows[0];
+  }
+
   async function saveCompletedTurn({
     threadId,
     ownerUserId,
@@ -66,7 +107,7 @@ export function createPostgresConversationRepository({
         state.translationId,
       ]);
       if (threadResult.rowCount !== 1) {
-        throw new Error('Thread ownership check failed.');
+        throw Object.assign(new Error('Thread ownership check failed.'), { status: 403 });
       }
 
       const userMessage = await client.query(`
@@ -153,7 +194,12 @@ export function createPostgresConversationRepository({
   }
 
   return {
+    ensureThread,
+    assertThreadOwner,
     saveCompletedTurn,
+    handleTurnComplete({ threadId, ownerUserId, state }) {
+      return saveCompletedTurn({ threadId, ownerUserId, state });
+    },
     createTurnCompletionHandler({ threadId, ownerUserId, title }) {
       return ({ state }) => saveCompletedTurn({ threadId, ownerUserId, title, state });
     },

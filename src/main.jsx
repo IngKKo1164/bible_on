@@ -425,7 +425,12 @@ function purgeExpiredHomeChats(rooms, now = Date.now()) {
 
 function loadHomeChatRooms() {
   const storedRooms = readStoredValue(HOME_CHAT_STORAGE_KEY, null);
-  if (Array.isArray(storedRooms)) return purgeExpiredHomeChats(storedRooms);
+  if (Array.isArray(storedRooms)) {
+    return purgeExpiredHomeChats(storedRooms).map((room) => ({
+      ...room,
+      apiThreadId: room.apiThreadId ?? window.crypto.randomUUID(),
+    }));
+  }
 
   const legacyMessages = readStoredValue(HOME_CHAT_LEGACY_KEY, []);
   if (!Array.isArray(legacyMessages) || legacyMessages.length === 0) return [];
@@ -433,6 +438,7 @@ function loadHomeChatRooms() {
   const createdAt = Date.now();
   return [{
     id: `home-chat-migrated-${createdAt}`,
+    apiThreadId: window.crypto.randomUUID(),
     title: makeHomeChatTitle(legacyMessages),
     messages: legacyMessages,
     createdAt,
@@ -634,12 +640,15 @@ function App() {
     const currentRoom = homeChatRooms.find((room) => (
       room.id === activeHomeChatId && !room.deletedAt
     ));
-    if (currentRoom && !forceNew) return currentRoom.id;
+    if (currentRoom && !forceNew) {
+      return { roomId: currentRoom.id, apiThreadId: currentRoom.apiThreadId };
+    }
 
     const createdAt = Date.now();
-    const roomId = `home-chat-${createdAt}`;
+    const roomId = window.crypto?.randomUUID?.() ?? `home-chat-${createdAt}`;
     const room = {
       id: roomId,
+      apiThreadId: roomId,
       title: makeHomeChatTitle([{ role: 'user', text: firstQuestion }]),
       messages: [],
       createdAt,
@@ -648,7 +657,7 @@ function App() {
     };
     setHomeChatRooms((current) => [room, ...current]);
     setActiveHomeChatId(roomId);
-    return roomId;
+    return { roomId, apiThreadId: roomId };
   };
 
   const appendHomeChatMessage = (roomId, message) => {
@@ -738,6 +747,7 @@ function App() {
             selectBiblePassage={selectBiblePassage}
             continueCurrentReading={continueCurrentReading}
             favoriteRefs={favoriteRefs}
+            selectedTranslation={selectedTranslation}
             chatRooms={homeChatRooms.filter(({ deletedAt }) => !deletedAt)}
             activeChatId={activeHomeChatId}
             ragMessages={homeRagMessages}
@@ -1159,6 +1169,7 @@ function HomeView({
   selectBiblePassage,
   continueCurrentReading,
   favoriteRefs,
+  selectedTranslation,
   chatRooms,
   activeChatId,
   ragMessages,
@@ -1267,20 +1278,39 @@ function HomeView({
     if (!text || isSearching) return;
 
     const userMessage = { id: `question-${Date.now()}`, role: 'user', text };
-    const roomId = prepareChat(text, !isChatOpen);
+    const { roomId, apiThreadId } = prepareChat(text, !isChatOpen);
     openChat();
     appendChatMessage(roomId, userMessage);
     setQuestion('');
     setIsSearching(true);
 
-    await new Promise((resolve) => window.setTimeout(resolve, 420));
-    appendChatMessage(roomId, {
-      id: `answer-${Date.now()}`,
-      role: 'assistant',
-      text: 'Test 중입니다.',
-      citations: [],
-    });
-    setIsSearching(false);
+    let userFacingError = '답변을 만들지 못했어요. 잠시 후 다시 시도해 주세요.';
+    try {
+      const response = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          threadId: apiThreadId,
+          query: text,
+          translationId: selectedTranslation,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        userFacingError = payload?.error?.message || userFacingError;
+        throw new Error('Bible chat request failed.');
+      }
+      appendChatMessage(roomId, payload.message);
+    } catch {
+      appendChatMessage(roomId, {
+        id: `answer-error-${Date.now()}`,
+        role: 'assistant',
+        text: userFacingError,
+        citations: [],
+      });
+    } finally {
+      setIsSearching(false);
+    }
   };
 
   const submitQuestion = (event) => {

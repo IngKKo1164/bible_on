@@ -80,3 +80,6 @@ integration-tested now without API spend while preserving the final orchestratio
 authenticated `ownerUserId` in the server request handler, then pass the resulting handler to the
 graph. Its transaction upserts both messages, citations, and the compact retrieval audit by `turnId`;
 the ownership guard prevents a conflicting thread ID from being attached to another user.
+
+The OpenAI Responses API adapter, low-cost default model, local API bridge, and production security
+requirements are documented in `docs/OPENAI_API.md`.

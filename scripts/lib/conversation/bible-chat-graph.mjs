@@ -230,7 +230,7 @@ export function createBibleChatGraph({
     };
   };
 
-  const persistTurn = async (state) => {
+  const persistTurn = async (state, config) => {
     const activePassageIds = state.retrievedPassageIds.length
       ? uniqueStrings(state.retrievedPassageIds)
       : uniqueStrings(state.activePassageIds);
@@ -259,6 +259,8 @@ export function createBibleChatGraph({
       // Checkpoint retries can replay this node, so persistence adapters must key writes by turnId.
       await onTurnComplete({
         idempotencyKey: state.turnId,
+        threadId: config.configurable?.thread_id,
+        ownerUserId: config.configurable?.owner_user_id,
         state: { ...state, ...update },
       });
     }
@@ -309,6 +311,7 @@ export function invokeBibleChatTurn({
   translationId = 'RNKSV',
   selectedPassageId = null,
   turnId = randomUUID(),
+  ownerUserId,
 }) {
   if (!threadId?.trim()) throw new Error('threadId is required.');
   return graph.invoke({
@@ -317,13 +320,19 @@ export function invokeBibleChatTurn({
     translationId,
     selectedPassageId,
   }, {
-    configurable: { thread_id: threadId },
+    configurable: {
+      thread_id: threadId,
+      ...(ownerUserId ? { owner_user_id: ownerUserId } : {}),
+    },
   });
 }
 
-export function resumeBibleChatTurn({ graph, threadId, passageId }) {
+export function resumeBibleChatTurn({ graph, threadId, passageId, ownerUserId }) {
   if (!threadId?.trim()) throw new Error('threadId is required.');
   return graph.invoke(new Command({ resume: { passageId } }), {
-    configurable: { thread_id: threadId },
+    configurable: {
+      thread_id: threadId,
+      ...(ownerUserId ? { owner_user_id: ownerUserId } : {}),
+    },
   });
 }

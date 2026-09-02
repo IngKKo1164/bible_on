@@ -3,8 +3,13 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=20.12"
+  },
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite --host 0.0.0.0",
+    "dev:api": "node server/dev-server.mjs",
     "build": "vite build",
     "data:download": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/download-rag-data.ps1",
     "data:kbs-bible": "node scripts/download-kbs-bible.mjs",
@@ -17,8 +22,9 @@
     "data:rag-index-validate": "node scripts/validate-rag-search-index.mjs",
     "db:langgraph-setup": "node scripts/setup-langgraph-postgres.mjs",
     "rag:query": "node scripts/query-rag.mjs",
+    "rag:chat": "node scripts/query-openai-rag.mjs",
     "rag:evaluate": "node scripts/evaluate-rag-retrieval.mjs",
-    "test:rag": "node --test scripts/tests/rag-corpus.test.mjs scripts/tests/rag-metadata.test.mjs scripts/tests/search-text.test.mjs scripts/tests/bible-chat-graph.test.mjs",
+    "test:rag": "node --test scripts/tests/rag-corpus.test.mjs scripts/tests/rag-metadata.test.mjs scripts/tests/search-text.test.mjs scripts/tests/bible-chat-graph.test.mjs scripts/tests/openai-bible-chat.test.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
@@ -26,6 +32,7 @@
     "@langchain/langgraph-checkpoint-postgres": "^1.0.5",
     "@vitejs/plugin-react": "^4.3.4",
     "lucide-react": "^0.468.0",
+    "openai": "^6.49.0",
     "pg": "^8.23.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

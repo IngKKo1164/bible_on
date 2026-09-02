@@ -161,11 +161,12 @@ function normalizeExternalPlan(plan, input) {
     ? (plan?.clarificationQuestion?.trim() || '어느 말씀을 가리키는지 선택해 주세요.')
     : null;
 
+  const proposedReferences = uniqueStrings(plan?.resolvedReferences ?? anchors);
   return {
     continuity,
     retrievalAction,
     standaloneQuery,
-    resolvedReferences: uniqueStrings(plan?.resolvedReferences ?? anchors),
+    resolvedReferences: proposedReferences.filter((passageId) => anchors.includes(passageId)),
     searchHypotheses: buildHypotheses(
       input.currentQuery,
       standaloneQuery,
@@ -199,12 +200,14 @@ export function createContextualQueryPlanner({ generatePlan } = {}) {
   return {
     async plan(state) {
       const input = plannerInput(state);
+      const localPlan = deterministicPlan(input);
       const generated = typeof generatePlan === 'function'
+        && localPlan.continuity !== 'acknowledgement'
         ? await generatePlan({
             systemPrompt: CONTEXTUAL_QUERY_PLANNER_SYSTEM_PROMPT,
             input,
           })
-        : deterministicPlan(input);
+        : localPlan;
       return normalizeExternalPlan(generated, input);
     },
   };

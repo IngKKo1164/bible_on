@@ -5,3 +5,6 @@ RAG corpus, retrieval, and linked-metadata notes are documented in [docs/RAG_MET
 
 The adaptive conversational workflow and production database split are documented in
 [docs/RAG_CONVERSATION_GRAPH.md](docs/RAG_CONVERSATION_GRAPH.md).
+
+OpenAI model setup and the server-only API boundary are documented in
+[docs/OPENAI_API.md](docs/OPENAI_API.md).
