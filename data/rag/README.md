@@ -57,6 +57,35 @@ provenance but marked inactive, and positive weights use `log(1 + votes)` so hig
 edges do not overwhelm retrieval. Range endpoints remain ranges until query-time context
 assembly.
 
+## Build and query the local search index
+
+Build the hybrid retrieval index after the corpus validation succeeds:
+
+```powershell
+npm run data:rag-index
+npm run data:rag-index-validate
+npm run rag:query -- --translation=RNKSV "불안할 때 읽을 말씀"
+npm run rag:evaluate
+```
+
+The local-only files under `data/rag/index` combine Korean BM25 retrieval, normalized
+multilingual E5 embeddings, and a compact top-voted OpenBible adjacency index. The source
+heading passage remains the semantic result and citation unit. Passages that exceed the
+embedding model limit are split into technical vector windows only; a matching window is
+always collapsed back to its original passage before ranking or display.
+
+The pinned `Xenova/multilingual-e5-small` q8 model is cached under `data/rag/models`. Query
+and passage prefixes follow the upstream E5 model contract. Retrieval uses channel-confidence
+fusion for BM25 and vector candidates, preserving a strong exact match from either
+channel, then adds a capped one-hop cross-reference score with edge provenance retained in the
+result. Korean recommendation queries receive a small deterministic vocabulary expansion while
+the original user text remains unchanged. Both the model cache and generated index are excluded
+from Git and can be reproduced from the manifests and scripts.
+
+`npm run rag:evaluate` is a fast regression benchmark, not a production quality guarantee. It
+checks a small, hand-reviewed set of exact-lookup and recommendation questions across both Korean
+translations, and also rejects duplicate passages, translation leakage, and missing source URLs.
+
 ## Licensed Korean translations
 
 The app-facing Korean corpus is generated separately with `npm run data:kbs-bible` and

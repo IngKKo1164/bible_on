@@ -27,6 +27,11 @@ data/rag/raw/*
 data/rag/derived/
 data/rag/.derived-*/
 
+# Locally generated retrieval indexes and downloaded embedding models.
+data/rag/index/
+data/rag/.index-*/
+data/rag/models/
+
 # Licensed Korean Bible text generated from the approved KBS source.
 # Keep the corpus out of Git unless the written license explicitly allows
 # source-repository redistribution. The downloader recreates these files.
