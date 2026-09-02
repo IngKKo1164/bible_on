@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Bell,
@@ -6,18 +6,23 @@ import {
   Bookmark,
   Camera,
   Check,
+  Circle,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
   Flame,
+  Grid3X3,
   Highlighter,
   Home,
+  List,
+  Menu,
   MessageCircle,
   MoreHorizontal,
   NotebookPen,
   PenLine,
   Play,
+  Plus,
   Search,
   Send,
   Settings,
@@ -25,14 +30,16 @@ import {
   Sparkles,
   Star,
   ThumbsUp,
+  Trash2,
+  Underline,
   UserPlus,
   UserRound,
   Users,
+  Waves,
   X,
 } from 'lucide-react';
-import { BibleBookIcon as BookOpen, BibleOnLogo, ChurchCrossIcon as Church, SixteenthNoteIcon } from './brandIcons';
-import { bibleCatalog, loadKrvChapter } from './bibleData';
-import { homeQuestionSuggestions, retrieveBibleSearchAnswer } from './ragPrototype';
+import { BibleOnLogo, BibleBookIcon as BookOpen, ChurchCrossIcon as Church, SixteenthNoteIcon } from './brandIcons';
+import { bibleCatalog, loadKrvChapter, preloadKrvBible } from './bibleData';
 import OnboardingApp from './OnboardingApp';
 import './styles.css';
 
@@ -76,6 +83,10 @@ const bibleBooks = bibleCatalog.map((book) => ({
   tags: [],
   ...(readingHighlights[book.id] ?? {}),
 }));
+
+const defaultRecentPassages = Object.entries(readingHighlights)
+  .map(([bookId, reading]) => ({ bookId, chapter: reading.chapter }))
+  .reverse();
 
 const translations = [
   { id: 'KRV', label: '개역한글' },
@@ -296,6 +307,60 @@ const churchDirectoryMembers = [
   },
 ];
 
+const highlightMethodOptions = [
+  { id: 'underline', label: '밑줄', icon: Underline },
+  { id: 'wave', label: '물결', icon: Waves },
+  { id: 'circle', label: '동그라미', icon: Circle },
+  { id: 'marker', label: '형광펜', icon: Highlighter },
+];
+
+const highlightColorOptions = [
+  { id: 'red', label: '빨간색' },
+  { id: 'yellow', label: '노란색' },
+  { id: 'green', label: '초록색' },
+  { id: 'blue', label: '파란색' },
+];
+
+const defaultHighlightStyle = { method: 'marker', color: 'yellow' };
+
+const churchMessageMembers = [
+  ...initialChurchConversations.map((conversation, index) => ({
+    id: conversation.id,
+    name: conversation.name,
+    department: conversation.department,
+    role: conversation.role,
+    tone: ['violet', 'green', 'rose'][index % 3],
+  })),
+  ...churchDirectoryMembers,
+].sort((first, second) => first.name.localeCompare(second.name, 'ko-KR'));
+
+function getConversationParticipantIds(conversation) {
+  return conversation.participantIds ?? [conversation.id];
+}
+
+function getConversationParticipants(participantIds) {
+  return churchMessageMembers
+    .filter((member) => participantIds.includes(member.id))
+    .sort((first, second) => first.name.localeCompare(second.name, 'ko-KR'));
+}
+
+function getConversationDetails(participantIds, customName = '') {
+  const participants = getConversationParticipants(participantIds);
+  const firstParticipant = participants[0];
+  const isGroup = participants.length > 1;
+  const normalizedCustomName = isGroup ? customName.trim() : '';
+  const automaticName = isGroup
+    ? `${firstParticipant.name} 외 ${participants.length - 1}명`
+    : (firstParticipant?.name ?? '대화방');
+
+  return {
+    name: normalizedCustomName || automaticName,
+    customName: normalizedCustomName,
+    department: isGroup ? '단체 채팅' : (firstParticipant?.department ?? churchInfo.department),
+    role: isGroup ? `${participants.length}명` : (firstParticipant?.role ?? '교인'),
+  };
+}
+
 const tabs = [
   { id: 'bible', label: '성경', icon: BookOpen },
   { id: 'church', label: '교회', icon: Church },
@@ -321,8 +386,89 @@ function writeStoredValue(key, value) {
   }
 }
 
+function normalizeVerseHighlights(stored) {
+  if (Array.isArray(stored)) {
+    return Object.fromEntries(stored.map((verseId) => [verseId, { ...defaultHighlightStyle }]));
+  }
+  if (!stored || typeof stored !== 'object') return {};
+  return Object.fromEntries(Object.entries(stored).map(([verseId, style]) => (
+    [verseId, normalizeHighlightStyle(style)]
+  )));
+}
+
+function normalizeHighlightStyle(stored) {
+  const storedMethod = stored?.method === 'pencil' ? 'wave' : stored?.method;
+  const methodExists = highlightMethodOptions.some(({ id }) => id === storedMethod);
+  const colorExists = highlightColorOptions.some(({ id }) => id === stored?.color);
+  return {
+    method: methodExists ? storedMethod : defaultHighlightStyle.method,
+    color: colorExists ? stored.color : defaultHighlightStyle.color,
+  };
+}
+
+const HOME_CHAT_STORAGE_KEY = 'bibleon.homeChatRoomsV1';
+const HOME_CHAT_ACTIVE_KEY = 'bibleon.activeHomeChatV1';
+const HOME_CHAT_LEGACY_KEY = 'bibleon.homeTestMessagesV2';
+const HOME_CHAT_DELETE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+function makeHomeChatTitle(messages) {
+  const firstQuestion = messages.find(({ role }) => role === 'user')?.text?.trim() ?? '';
+  if (!firstQuestion) return '새 대화';
+  return firstQuestion.length > 30 ? `${firstQuestion.slice(0, 30)}...` : firstQuestion;
+}
+
+function purgeExpiredHomeChats(rooms, now = Date.now()) {
+  return rooms.filter((room) => (
+    !room.deletedAt || now - room.deletedAt < HOME_CHAT_DELETE_RETENTION_MS
+  ));
+}
+
+function loadHomeChatRooms() {
+  const storedRooms = readStoredValue(HOME_CHAT_STORAGE_KEY, null);
+  if (Array.isArray(storedRooms)) return purgeExpiredHomeChats(storedRooms);
+
+  const legacyMessages = readStoredValue(HOME_CHAT_LEGACY_KEY, []);
+  if (!Array.isArray(legacyMessages) || legacyMessages.length === 0) return [];
+
+  const createdAt = Date.now();
+  return [{
+    id: `home-chat-migrated-${createdAt}`,
+    title: makeHomeChatTitle(legacyMessages),
+    messages: legacyMessages,
+    createdAt,
+    updatedAt: createdAt,
+    deletedAt: null,
+  }];
+}
+
+function formatHomeChatTime(timestamp) {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDifference = Math.round((startOfToday - startOfDate) / (24 * 60 * 60 * 1000));
+
+  if (dayDifference === 0) {
+    return date.toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' });
+  }
+  if (dayDifference === 1) return '어제';
+  return date.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
+}
+
 function App() {
   const workspaceRef = useRef(null);
+  const initialHomeChatRoomsRef = useRef(null);
+  if (initialHomeChatRoomsRef.current === null) {
+    initialHomeChatRoomsRef.current = loadHomeChatRooms();
+  }
+  const [isAppLoading, setIsAppLoading] = useState(true);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingError, setLoadingError] = useState('');
+  const [loadingAttempt, setLoadingAttempt] = useState(0);
+  const [isHomeIntro, setIsHomeIntro] = useState(true);
+  const [isHomeGradientVisible, setIsHomeGradientVisible] = useState(false);
+  const [isHomeSearchFlashing, setIsHomeSearchFlashing] = useState(false);
+  const [isHomeReturning, setIsHomeReturning] = useState(false);
   const [activeTab, setActiveTab] = useState('home');
   const [selectedBookId, setSelectedBookId] = useState('philippians');
   const [selectedChapter, setSelectedChapter] = useState(4);
@@ -339,19 +485,84 @@ function App() {
   const [newPost, setNewPost] = useState('');
   const [posts, setPosts] = useState(communityPosts);
   const [conversations, setConversations] = useState(initialChurchConversations);
-  const [homeRagMessages, setHomeRagMessages] = useState(() => (
-    readStoredValue('bibleon.homeRagMessages', [])
-  ));
+  const [isHomeChatOpen, setIsHomeChatOpen] = useState(false);
+  const [homeChatHistoryOpen, setHomeChatHistoryOpen] = useState(false);
+  const [homeChatRooms, setHomeChatRooms] = useState(() => initialHomeChatRoomsRef.current);
+  const [activeHomeChatId, setActiveHomeChatId] = useState(() => {
+    const storedActiveId = readStoredValue(HOME_CHAT_ACTIVE_KEY, '');
+    const availableRooms = initialHomeChatRoomsRef.current.filter(({ deletedAt }) => !deletedAt);
+    return availableRooms.some(({ id }) => id === storedActiveId)
+      ? storedActiveId
+      : (availableRooms[0]?.id ?? '');
+  });
   const [personalProfile, setPersonalProfile] = useState(() => ({
     ...defaultPersonalProfile,
     ...readStoredValue('bibleon.personalProfile', {}),
   }));
   const [verseNotes, setVerseNotes] = useState(() => readStoredValue('bibleon.verseNotes', {}));
-  const [highlightedVerseIds, setHighlightedVerseIds] = useState(() =>
-    readStoredValue('bibleon.highlightedVerses', [])
-  );
+  const [verseHighlights, setVerseHighlights] = useState(() => (
+    normalizeVerseHighlights(readStoredValue('bibleon.highlightedVerses', {}))
+  ));
+  const [lastHighlightStyle, setLastHighlightStyle] = useState(() => (
+    normalizeHighlightStyle(readStoredValue('bibleon.lastHighlightStyle', defaultHighlightStyle))
+  ));
 
   const selectedBook = bibleBooks.find((book) => book.id === selectedBookId) ?? bibleBooks[0];
+  const activeHomeChat = homeChatRooms.find((room) => (
+    room.id === activeHomeChatId && !room.deletedAt
+  ));
+  const homeRagMessages = activeHomeChat?.messages ?? [];
+
+  useEffect(() => {
+    let active = true;
+
+    const preloadBible = async () => {
+      setIsAppLoading(true);
+      setLoadingError('');
+      setLoadingProgress(0);
+      const startedAt = Date.now();
+
+      try {
+        await preloadKrvBible((completed, total) => {
+          if (active) setLoadingProgress(Math.round((completed / total) * 100));
+        });
+        const remainingMinimumTime = Math.max(0, 700 - (Date.now() - startedAt));
+        if (remainingMinimumTime > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, remainingMinimumTime));
+        }
+        if (!active) return;
+        setLoadingProgress(100);
+        await new Promise((resolve) => window.setTimeout(resolve, 220));
+        if (active) setIsAppLoading(false);
+      } catch {
+        if (active) setLoadingError('성경 본문을 불러오지 못했어요.');
+      }
+    };
+
+    preloadBible();
+    return () => { active = false; };
+  }, [loadingAttempt]);
+
+  useEffect(() => {
+    if (isAppLoading) return undefined;
+    const flashTimerId = window.setTimeout(() => setIsHomeSearchFlashing(true), 0);
+    const revealTimerId = window.setTimeout(() => {
+      setIsHomeSearchFlashing(false);
+      setIsHomeGradientVisible(true);
+    }, 500);
+    const returnTimerId = window.setTimeout(() => {
+      setIsHomeIntro(false);
+      setIsHomeReturning(true);
+    }, 2000);
+    const settleTimerId = window.setTimeout(() => setIsHomeReturning(false), 3000);
+
+    return () => {
+      window.clearTimeout(flashTimerId);
+      window.clearTimeout(revealTimerId);
+      window.clearTimeout(returnTimerId);
+      window.clearTimeout(settleTimerId);
+    };
+  }, [isAppLoading]);
 
   const selectBiblePassage = (bookId = selectedBookId, chapter = selectedChapter) => {
     setSelectedBookId(bookId);
@@ -365,21 +576,116 @@ function App() {
     });
   };
 
+  const closeHomeChat = () => {
+    setIsHomeChatOpen(false);
+    window.requestAnimationFrame(() => {
+      workspaceRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  };
+
+  const selectTab = (tabId) => {
+    if (tabId === 'home') {
+      setActiveTab('home');
+      closeHomeChat();
+      return;
+    }
+    setIsHomeChatOpen(false);
+    setActiveTab(tabId);
+  };
+
   useEffect(() => {
     writeStoredValue('bibleon.verseNotes', verseNotes);
   }, [verseNotes]);
 
   useEffect(() => {
-    writeStoredValue('bibleon.highlightedVerses', highlightedVerseIds);
-  }, [highlightedVerseIds]);
+    writeStoredValue('bibleon.highlightedVerses', verseHighlights);
+  }, [verseHighlights]);
+
+  useEffect(() => {
+    writeStoredValue('bibleon.lastHighlightStyle', lastHighlightStyle);
+  }, [lastHighlightStyle]);
 
   useEffect(() => {
     writeStoredValue('bibleon.personalProfile', personalProfile);
   }, [personalProfile]);
 
   useEffect(() => {
-    writeStoredValue('bibleon.homeRagMessages', homeRagMessages);
-  }, [homeRagMessages]);
+    writeStoredValue(HOME_CHAT_STORAGE_KEY, homeChatRooms);
+    writeStoredValue(HOME_CHAT_ACTIVE_KEY, activeHomeChatId);
+    try {
+      window.localStorage.removeItem(HOME_CHAT_LEGACY_KEY);
+    } catch {
+      // The migrated chat remains available in the current session when storage is unavailable.
+    }
+  }, [activeHomeChatId, homeChatRooms]);
+
+  useEffect(() => {
+    const purgeDeletedRooms = () => {
+      setHomeChatRooms((current) => {
+        const retained = purgeExpiredHomeChats(current);
+        return retained.length === current.length ? current : retained;
+      });
+    };
+    const intervalId = window.setInterval(purgeDeletedRooms, 60 * 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  const prepareHomeChat = (firstQuestion, forceNew = false) => {
+    const currentRoom = homeChatRooms.find((room) => (
+      room.id === activeHomeChatId && !room.deletedAt
+    ));
+    if (currentRoom && !forceNew) return currentRoom.id;
+
+    const createdAt = Date.now();
+    const roomId = `home-chat-${createdAt}`;
+    const room = {
+      id: roomId,
+      title: makeHomeChatTitle([{ role: 'user', text: firstQuestion }]),
+      messages: [],
+      createdAt,
+      updatedAt: createdAt,
+      deletedAt: null,
+    };
+    setHomeChatRooms((current) => [room, ...current]);
+    setActiveHomeChatId(roomId);
+    return roomId;
+  };
+
+  const appendHomeChatMessage = (roomId, message) => {
+    setHomeChatRooms((current) => current.map((room) => {
+      if (room.id !== roomId) return room;
+      const messages = [...room.messages, message];
+      return {
+        ...room,
+        title: makeHomeChatTitle(messages),
+        messages,
+        updatedAt: Date.now(),
+      };
+    }));
+  };
+
+  const openSavedHomeChat = (roomId) => {
+    setActiveHomeChatId(roomId);
+    setActiveTab('home');
+    setIsHomeChatOpen(true);
+  };
+
+  const startNewHomeChat = () => {
+    setActiveHomeChatId('');
+    setActiveTab('home');
+    setIsHomeChatOpen(true);
+  };
+
+  const deleteHomeChat = (roomId) => {
+    const deletedAt = Date.now();
+    setHomeChatRooms((current) => current.map((room) => (
+      room.id === roomId ? { ...room, deletedAt } : room
+    )));
+    if (activeHomeChatId === roomId) {
+      const nextRoom = homeChatRooms.find((room) => room.id !== roomId && !room.deletedAt);
+      setActiveHomeChatId(nextRoom?.id ?? '');
+    }
+  };
 
   const addQtPost = () => {
     const text = newPost.trim();
@@ -391,12 +697,36 @@ function App() {
     setNewPost('');
   };
 
+  const showHomeIntro = activeTab === 'home' && isHomeIntro;
+
   return (
-    <main className="app-shell">
+    <main
+      className={`app-shell ${showHomeIntro ? 'is-home-intro' : ''} ${!isHomeGradientVisible ? 'is-home-gradient-hidden' : ''} ${isHomeSearchFlashing ? 'is-home-search-flashing' : ''} ${isHomeReturning ? 'is-home-returning' : ''} ${activeTab === 'home' && isHomeChatOpen ? 'is-home-chatting' : ''}`}
+      aria-busy={isAppLoading}
+    >
+      {isAppLoading && (
+        <div
+          className="app-loading-screen"
+          role="status"
+          aria-label={`성경 본문 불러오는 중 ${loadingProgress}%`}
+        >
+          <div className="app-loading-logo-stack" style={{ '--loading-progress': `${loadingProgress}%` }} aria-hidden="true">
+            <BibleOnLogo className="app-loading-logo-base" size={132} />
+            <span className="app-loading-logo-fill"><BibleOnLogo size={132} /></span>
+          </div>
+          {loadingError && (
+            <div className="app-loading-error">
+              <span>{loadingError}</span>
+              <button type="button" onClick={() => setLoadingAttempt((current) => current + 1)}>다시 시도</button>
+            </div>
+          )}
+        </div>
+      )}
       <section className="workspace" aria-label="바이블온 앱" ref={workspaceRef}>
         <Topbar
           selectedTranslation={selectedTranslation}
           setSelectedTranslation={setSelectedTranslation}
+          onOpenChatHistory={() => setHomeChatHistoryOpen(true)}
         />
         {activeTab === 'home' && (
           <HomeView
@@ -408,8 +738,15 @@ function App() {
             selectBiblePassage={selectBiblePassage}
             continueCurrentReading={continueCurrentReading}
             favoriteRefs={favoriteRefs}
+            chatRooms={homeChatRooms.filter(({ deletedAt }) => !deletedAt)}
+            activeChatId={activeHomeChatId}
             ragMessages={homeRagMessages}
-            setRagMessages={setHomeRagMessages}
+            isChatOpen={isHomeChatOpen}
+            isIntro={showHomeIntro}
+            openChat={() => setIsHomeChatOpen(true)}
+            closeChat={closeHomeChat}
+            prepareChat={prepareHomeChat}
+            appendChatMessage={appendHomeChatMessage}
           />
         )}
         {activeTab === 'bible' && (
@@ -426,8 +763,10 @@ function App() {
             setReadVerseIds={setReadVerseIds}
             verseNotes={verseNotes}
             setVerseNotes={setVerseNotes}
-            highlightedVerseIds={highlightedVerseIds}
-            setHighlightedVerseIds={setHighlightedVerseIds}
+            verseHighlights={verseHighlights}
+            setVerseHighlights={setVerseHighlights}
+            lastHighlightStyle={lastHighlightStyle}
+            setLastHighlightStyle={setLastHighlightStyle}
           />
         )}
         {activeTab === 'church' && (
@@ -451,12 +790,24 @@ function App() {
           />
         )}
       </section>
-      <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
+      <HomeChatHistory
+        isOpen={homeChatHistoryOpen}
+        chatRooms={homeChatRooms.filter(({ deletedAt }) => !deletedAt)}
+        activeChatId={activeHomeChatId}
+        onClose={() => setHomeChatHistoryOpen(false)}
+        onOpenChat={openSavedHomeChat}
+        onStartNewChat={startNewHomeChat}
+        onDeleteChat={deleteHomeChat}
+      />
+      <BottomNav
+        activeTab={activeTab === 'home' && isHomeChatOpen ? null : activeTab}
+        onSelectTab={selectTab}
+      />
     </main>
   );
 }
 
-function Topbar({ selectedTranslation, setSelectedTranslation }) {
+function Topbar({ selectedTranslation, setSelectedTranslation, onOpenChatHistory }) {
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notifications, setNotifications] = useState(initialRecentNotifications);
@@ -475,9 +826,24 @@ function Topbar({ selectedTranslation, setSelectedTranslation }) {
     setSettingsOpen(true);
   };
 
+  const openChatHistory = () => {
+    setNotificationOpen(false);
+    setSettingsOpen(false);
+    onOpenChatHistory();
+  };
+
   return (
     <>
       <header className="topbar">
+        <button
+          className="icon-button topbar-history-button"
+          type="button"
+          aria-label="지난 대화 열기"
+          title="지난 대화"
+          onClick={openChatHistory}
+        >
+          <Menu size={21} aria-hidden="true" />
+        </button>
         <div className="topbar-actions">
           <div className="topbar-action-wrap">
             <button
@@ -666,7 +1032,101 @@ function NotificationSwipeItem({ notification, onRead, onDelete }) {
   );
 }
 
-function BottomNav({ activeTab, setActiveTab }) {
+function HomeChatHistory({
+  isOpen,
+  chatRooms,
+  activeChatId,
+  onClose,
+  onOpenChat,
+  onStartNewChat,
+  onDeleteChat,
+}) {
+  const [pendingDeleteId, setPendingDeleteId] = useState('');
+  const sortedChatRooms = useMemo(() => (
+    [...chatRooms].sort((first, second) => second.updatedAt - first.updatedAt)
+  ), [chatRooms]);
+  const pendingDeleteRoom = chatRooms.find(({ id }) => id === pendingDeleteId);
+
+  useEffect(() => {
+    if (!isOpen) setPendingDeleteId('');
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="home-chat-history-layer">
+      <button className="home-chat-history-backdrop" type="button" aria-label="지난 대화 닫기" onClick={onClose} />
+      <aside className="home-chat-history" aria-label="지난 대화">
+        <header>
+          <div><Menu size={20} aria-hidden="true" /><h2>지난 대화</h2></div>
+          <div>
+            <button
+              type="button"
+              aria-label="새 대화"
+              title="새 대화"
+              onClick={() => {
+                onStartNewChat();
+                onClose();
+              }}
+            >
+              <Plus size={20} aria-hidden="true" />
+            </button>
+            <button type="button" aria-label="지난 대화 닫기" onClick={onClose}>
+              <X size={20} aria-hidden="true" />
+            </button>
+          </div>
+        </header>
+
+        <div className="home-chat-history-list">
+          {sortedChatRooms.map((room) => (
+            <div className={`home-chat-history-row ${room.id === activeChatId ? 'is-active' : ''}`} key={room.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenChat(room.id);
+                  onClose();
+                }}
+              >
+                <strong>{room.title}</strong>
+                <span>{formatHomeChatTime(room.updatedAt)}</span>
+              </button>
+              <button type="button" aria-label={`${room.title} 삭제`} onClick={() => setPendingDeleteId(room.id)}>
+                <Trash2 size={17} aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+          {sortedChatRooms.length === 0 && (
+            <div className="home-chat-history-empty">
+              <MessageCircle size={24} aria-hidden="true" />
+              <p>아직 저장된 대화가 없어요.</p>
+            </div>
+          )}
+        </div>
+
+        {pendingDeleteRoom && (
+          <div className="home-chat-delete-confirm" role="alertdialog" aria-modal="true" aria-labelledby="home-chat-delete-title">
+            <strong id="home-chat-delete-title">이 대화를 삭제할까요?</strong>
+            <p>목록에서 즉시 사라지며 30일 후 완전히 삭제됩니다.</p>
+            <div>
+              <button type="button" onClick={() => setPendingDeleteId('')}>취소</button>
+              <button
+                type="button"
+                onClick={() => {
+                  onDeleteChat(pendingDeleteRoom.id);
+                  setPendingDeleteId('');
+                }}
+              >
+                삭제
+              </button>
+            </div>
+          </div>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function BottomNav({ activeTab, onSelectTab }) {
   return (
     <nav className="bottom-nav" aria-label="하단 메뉴">
       {tabs.map((tab) => {
@@ -677,7 +1137,7 @@ function BottomNav({ activeTab, setActiveTab }) {
             key={tab.id}
             type="button"
             aria-current={activeTab === tab.id ? 'page' : undefined}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => onSelectTab(tab.id)}
           >
             <span className="nav-icon">
               <Icon size={21} strokeWidth={activeTab === tab.id ? 2.5 : 2} aria-hidden="true" />
@@ -699,54 +1159,128 @@ function HomeView({
   selectBiblePassage,
   continueCurrentReading,
   favoriteRefs,
+  chatRooms,
+  activeChatId,
   ragMessages,
-  setRagMessages,
+  isChatOpen,
+  isIntro,
+  openChat,
+  closeChat,
+  prepareChat,
+  appendChatMessage,
 }) {
   const [question, setQuestion] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const answerEndRef = useRef(null);
-  const isChatting = ragMessages.length > 0;
+  const homePageRef = useRef(null);
+  const homeContentClusterRef = useRef(null);
+  const searchContainerRef = useRef(null);
+  const questionInputRef = useRef(null);
+  const swipeGestureRef = useRef(null);
+  const activeChatTitle = chatRooms.find(({ id }) => id === activeChatId)?.title ?? '새 대화';
 
   useEffect(() => {
-    if (!isChatting) return;
+    if (!isChatOpen) return;
     window.requestAnimationFrame(() => {
       answerEndRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
     });
-  }, [isChatting, ragMessages.length]);
+  }, [isChatOpen, ragMessages.length]);
+
+  useEffect(() => {
+    const input = questionInputRef.current;
+    if (!input) return;
+    input.style.height = 'auto';
+    const maxHeight = 154;
+    input.style.height = `${Math.min(input.scrollHeight, maxHeight)}px`;
+    input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, [question]);
+
+  useEffect(() => {
+    const observedSearch = searchContainerRef.current;
+    const syncHomeLayout = () => {
+      const page = homePageRef.current;
+      const cluster = homeContentClusterRef.current;
+      const search = searchContainerRef.current;
+      const bottomNav = document.querySelector('.bottom-nav');
+      if (!page || !cluster || !search || !bottomNav) return;
+
+      const pageTop = page.getBoundingClientRect().top;
+      const availableHeight = bottomNav.getBoundingClientRect().top - pageTop;
+      const clusterShift = Math.max(0, availableHeight - cluster.offsetTop - search.offsetHeight);
+      page.style.setProperty('--home-chat-height', `${availableHeight}px`);
+      page.style.setProperty('--home-cluster-shift', `${clusterShift}px`);
+      page.style.setProperty('--home-composer-height', `${search.offsetHeight}px`);
+
+      const shell = page.closest('.app-shell');
+      const searchBar = search.querySelector('.home-rag-search') ?? search;
+      if (shell) {
+        const shellRect = shell.getBoundingClientRect();
+        const searchRect = searchBar.getBoundingClientRect();
+        shell.style.setProperty(
+          '--app-gradient-center-x',
+          `${searchRect.left + searchRect.width / 2 - shellRect.left}px`
+        );
+        shell.style.setProperty(
+          '--app-gradient-center-y',
+          `${searchRect.top + searchRect.height / 2 - shellRect.top}px`
+        );
+        const outlineTop = searchRect.top - shellRect.top;
+        const outlineRight = shellRect.right - searchRect.right;
+        const outlineBottom = shellRect.bottom - searchRect.bottom;
+        const outlineLeft = searchRect.left - shellRect.left;
+        shell.style.setProperty('--app-search-outline-top', `${outlineTop}px`);
+        shell.style.setProperty('--app-search-outline-right', `${outlineRight}px`);
+        shell.style.setProperty('--app-search-outline-bottom', `${outlineBottom}px`);
+        shell.style.setProperty('--app-search-outline-left', `${outlineLeft}px`);
+        shell.style.setProperty('--app-search-outline-radius', `${searchRect.height / 2}px`);
+        shell.style.setProperty(
+          '--app-gradient-max-spread',
+          `${Math.max(outlineTop, outlineRight, outlineBottom, outlineLeft) + 32}px`
+        );
+      }
+    };
+
+    syncHomeLayout();
+    const trackingStartedAt = performance.now();
+    let frameId;
+    const trackMovingSearch = () => {
+      syncHomeLayout();
+      if (performance.now() - trackingStartedAt < 1100) {
+        frameId = window.requestAnimationFrame(trackMovingSearch);
+      }
+    };
+    frameId = window.requestAnimationFrame(trackMovingSearch);
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(syncHomeLayout);
+    if (observedSearch) resizeObserver?.observe(observedSearch);
+    window.addEventListener('resize', syncHomeLayout);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', syncHomeLayout);
+    };
+  }, [isChatOpen, isIntro, question]);
 
   const askBibleQuestion = async (nextQuestion) => {
     const text = nextQuestion.trim();
     if (!text || isSearching) return;
 
     const userMessage = { id: `question-${Date.now()}`, role: 'user', text };
-    setRagMessages((current) => [...current, userMessage]);
+    const roomId = prepareChat(text, !isChatOpen);
+    openChat();
+    appendChatMessage(roomId, userMessage);
     setQuestion('');
     setIsSearching(true);
 
-    try {
-      const result = await retrieveBibleSearchAnswer(text);
-      setRagMessages((current) => [
-        ...current,
-        {
-          id: `answer-${Date.now()}`,
-          role: 'assistant',
-          text: result.answer,
-          citations: result.citations,
-        },
-      ]);
-    } catch {
-      setRagMessages((current) => [
-        ...current,
-        {
-          id: `answer-error-${Date.now()}`,
-          role: 'assistant',
-          text: '성경 본문을 불러오지 못했어요. 잠시 후 다시 질문해 주세요.',
-          citations: [],
-        },
-      ]);
-    } finally {
-      setIsSearching(false);
-    }
+    await new Promise((resolve) => window.setTimeout(resolve, 420));
+    appendChatMessage(roomId, {
+      id: `answer-${Date.now()}`,
+      role: 'assistant',
+      text: 'Test 중입니다.',
+      citations: [],
+    });
+    setIsSearching(false);
   };
 
   const submitQuestion = (event) => {
@@ -754,55 +1288,126 @@ function HomeView({
     askBibleQuestion(question);
   };
 
-  return (
-    <div className={`home-page ${isChatting ? 'is-chatting' : ''}`}>
-      {!isChatting && (
-        <div className="home-search-brand" aria-hidden="true">
-          <BibleOnLogo size={52} />
-          <strong>바이블온</strong>
-        </div>
-      )}
+  const handleSwipeStart = (event) => {
+    if (!isChatOpen || event.target.closest('.home-rag-search')) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    swipeGestureRef.current = { x: event.clientX, y: event.clientY };
+  };
 
-      <div className="home-search-sticky">
-        <form className="home-rag-search" role="search" onSubmit={submitQuestion}>
-          <Search size={20} aria-hidden="true" />
-          <input
-            aria-label="말씀 질문"
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            placeholder="말씀을 찾아보세요"
-          />
-          {question && (
-            <button className="home-search-clear" type="button" aria-label="질문 지우기" onClick={() => setQuestion('')}>
-              <X size={16} aria-hidden="true" />
-            </button>
-          )}
-          <button className="home-search-submit" type="submit" aria-label="질문 보내기" disabled={!question.trim() || isSearching}>
-            <Send size={18} aria-hidden="true" />
-          </button>
-        </form>
+  const handleSwipeEnd = (event) => {
+    if (!swipeGestureRef.current || !isChatOpen) return;
+    const deltaX = event.clientX - swipeGestureRef.current.x;
+    const deltaY = event.clientY - swipeGestureRef.current.y;
+    swipeGestureRef.current = null;
+    if (deltaY < -72 && Math.abs(deltaY) > Math.abs(deltaX) * 1.25) closeChat();
+  };
+
+  return (
+    <div
+      ref={homePageRef}
+      className={`home-page ${isChatOpen ? 'is-chatting' : ''} ${isIntro ? 'is-intro' : ''}`}
+      onPointerDown={handleSwipeStart}
+      onPointerUp={handleSwipeEnd}
+      onPointerCancel={() => { swipeGestureRef.current = null; }}
+    >
+      <div className="home-search-brand" aria-hidden={isChatOpen}>
+        <strong>무엇이든 편하게 물어보세요.</strong>
       </div>
 
-      {!isChatting && (
-        <div className="home-question-suggestions" aria-label="추천 질문">
-          {homeQuestionSuggestions.map((suggestion) => (
-            <button type="button" key={suggestion} onClick={() => askBibleQuestion(suggestion)}>{suggestion}</button>
-          ))}
-        </div>
-      )}
-
-      {isChatting ? (
-        <section className="home-rag-chat" aria-label="말씀 찾기 대화" aria-live="polite">
-          <div className="home-chat-toolbar">
-            <span>본문 기반</span>
-            <button type="button" aria-label="새 대화" title="새 대화" onClick={() => setRagMessages([])}>
-              <PenLine size={18} aria-hidden="true" />
+      <div className="home-content-cluster" ref={homeContentClusterRef}>
+        <div className="home-search-sticky" ref={searchContainerRef}>
+          <form className="home-rag-search" role="search" onSubmit={submitQuestion}>
+            <Search size={20} aria-hidden="true" />
+            <textarea
+              ref={questionInputRef}
+              aria-label="바이블온 질문"
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }}
+              placeholder="바이블온에게 물어보세요"
+              rows="1"
+            />
+            {question && (
+              <button className="home-search-clear" type="button" aria-label="질문 지우기" onClick={() => setQuestion('')}>
+                <X size={16} aria-hidden="true" />
+              </button>
+            )}
+            <button className="home-search-submit" type="submit" aria-label="질문 보내기" disabled={!question.trim() || isSearching}>
+              <Send size={18} aria-hidden="true" />
             </button>
+          </form>
+        </div>
+
+        <div className="home-lower-content" aria-hidden={isChatOpen} inert={isChatOpen ? true : undefined}>
+          <section className="home-dashboard-sheet" aria-label="홈 정보">
+            <div className="page-stack">
+              <button className="today-reading" type="button" aria-labelledby="today-reading-title" onClick={continueCurrentReading}>
+                <div className="today-reading-head">
+                  <div>
+                    <span className="eyebrow">성경 이어서 읽기</span>
+                    <h2 id="today-reading-title">{selectedBook.name} {selectedChapter}장</h2>
+                    <p>{selectedBook.title} · {selectedBook.lastRead}</p>
+                  </div>
+                  <span className="progress-number">{selectedBook.progress}%</span>
+                </div>
+                <ProgressBar value={selectedBook.progress} />
+              </button>
+
+              <section className="church-context">
+                <div className="church-context-mark"><Church size={22} aria-hidden="true" /></div>
+                <div>
+                  <span>내 교회</span>
+                  <strong>{churchInfo.name}</strong>
+                  <small>{churchInfo.department} · {churchInfo.role}</small>
+                </div>
+                <ChevronRight size={19} aria-hidden="true" />
+              </section>
+
+              <Section title="오늘 할 일">
+                <ListSurface>
+                  <ListRow
+                    icon={PenLine}
+                    title="오늘의 QT 남기기"
+                    description={`${churchInfo.department}에 묵상을 나눠보세요`}
+                    action="쓰기"
+                  />
+                  <ListRow
+                    icon={Sparkles}
+                    title="말씀 로드맵 확인"
+                    description={`이번 주 5일 중 1일 완료 · ${readCount}절 읽음`}
+                    action="보기"
+                  />
+                </ListSurface>
+              </Section>
+
+              <HomeRecommendations
+                query={query}
+                setQuery={setQuery}
+                selectBiblePassage={selectBiblePassage}
+                favoriteRefs={favoriteRefs}
+              />
+            </div>
+          </section>
+        </div>
+      </div>
+
+      {isChatOpen && (
+        <section className="home-rag-chat" aria-label="바이블온 대화" aria-live="polite">
+          <div className="home-chat-toolbar">
+            <strong>{activeChatTitle}</strong>
           </div>
           <div className="home-chat-messages">
             {ragMessages.map((message) => (
               <div className={`home-chat-message is-${message.role}`} key={message.id}>
-                {message.role === 'assistant' && <span className="home-chat-avatar"><BookOpen size={16} aria-hidden="true" /></span>}
+                {message.role === 'assistant' && (
+                  <span className="home-chat-avatar">
+                    <BibleOnLogo variant="white" size={32} aria-hidden="true" />
+                  </span>
+                )}
                 <div className="home-chat-message-body">
                   <p>{message.text}</p>
                   {message.citations?.length > 0 && (
@@ -820,65 +1425,399 @@ function HomeView({
             ))}
             {isSearching && (
               <div className="home-chat-message is-assistant is-loading" role="status">
-                <span className="home-chat-avatar"><BookOpen size={16} aria-hidden="true" /></span>
+                <span className="home-chat-avatar"><BibleOnLogo variant="white" size={32} aria-hidden="true" /></span>
                 <div className="home-chat-thinking"><i /><i /><i /></div>
               </div>
             )}
             <div ref={answerEndRef} />
           </div>
         </section>
-      ) : (
-        <section className="home-dashboard-sheet" aria-label="홈 정보">
-          <div className="page-stack">
-            <button className="today-reading" type="button" aria-labelledby="today-reading-title" onClick={continueCurrentReading}>
-              <div className="today-reading-head">
-                <div>
-                  <span className="eyebrow">성경 이어서 읽기</span>
-                  <h2 id="today-reading-title">{selectedBook.name} {selectedChapter}장</h2>
-                  <p>{selectedBook.title} · {selectedBook.lastRead}</p>
-                </div>
-                <span className="progress-number">{selectedBook.progress}%</span>
-              </div>
-              <ProgressBar value={selectedBook.progress} />
-            </button>
-
-            <section className="church-context">
-              <div className="church-context-mark"><Church size={22} aria-hidden="true" /></div>
-              <div>
-                <span>내 교회</span>
-                <strong>{churchInfo.name}</strong>
-                <small>{churchInfo.department} · {churchInfo.role}</small>
-              </div>
-              <ChevronRight size={19} aria-hidden="true" />
-            </section>
-
-            <Section title="오늘 할 일">
-              <ListSurface>
-                <ListRow
-                  icon={PenLine}
-                  title="오늘의 QT 남기기"
-                  description={`${churchInfo.department}에 묵상을 나눠보세요`}
-                  action="쓰기"
-                />
-                <ListRow
-                  icon={Sparkles}
-                  title="말씀 로드맵 확인"
-                  description={`이번 주 5일 중 1일 완료 · ${readCount}절 읽음`}
-                  action="보기"
-                />
-              </ListSurface>
-            </Section>
-
-            <HomeRecommendations
-              query={query}
-              setQuery={setQuery}
-              selectBiblePassage={selectBiblePassage}
-              favoriteRefs={favoriteRefs}
-            />
-          </div>
-        </section>
       )}
     </div>
+  );
+}
+
+function PickerWheel({ items, value, onChange, label }) {
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    const list = listRef.current;
+    const selected = list?.querySelector(`[data-wheel-value="${value}"]`);
+    if (!list || !selected) return;
+    list.scrollTo({
+      top: selected.offsetTop - ((list.clientHeight - selected.offsetHeight) / 2),
+      behavior: 'auto',
+    });
+  }, [items.length, label]);
+
+  const syncCenteredItem = () => {
+    const list = listRef.current;
+    if (!list) return;
+    const center = list.scrollTop + (list.clientHeight / 2);
+    const options = Array.from(list.querySelectorAll('[data-wheel-value]'));
+    const closest = options.reduce((current, option) => {
+      const distance = Math.abs((option.offsetTop + (option.offsetHeight / 2)) - center);
+      return !current || distance < current.distance ? { option, distance } : current;
+    }, null);
+    const nextValue = closest?.option.dataset.wheelValue;
+    if (nextValue !== undefined && String(value) !== nextValue) onChange(nextValue);
+  };
+
+  const selectItem = (event, nextValue) => {
+    const list = listRef.current;
+    const item = event.currentTarget;
+    onChange(String(nextValue));
+    list?.scrollTo({
+      top: item.offsetTop - ((list.clientHeight - item.offsetHeight) / 2),
+      behavior: 'smooth',
+    });
+  };
+
+  return (
+    <div className="picker-wheel-shell">
+      <div className="picker-wheel-focus" aria-hidden="true" />
+      <div
+        className="picker-wheel"
+        ref={listRef}
+        role="listbox"
+        aria-label={label}
+        tabIndex="0"
+        onScroll={syncCenteredItem}
+      >
+        {items.map((item) => (
+          <button
+            className={String(value) === String(item.value) ? 'is-selected' : ''}
+            key={item.value}
+            type="button"
+            role="option"
+            aria-selected={String(value) === String(item.value)}
+            data-wheel-value={item.value}
+            onClick={(event) => selectItem(event, item.value)}
+          >
+            <strong>{item.label}</strong>
+            {item.meta && <span>{item.meta}</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PassagePickerSheet({ selectedBookId, selectedChapter, onClose, onSelect }) {
+  const initialBook = bibleBooks.find((book) => book.id === selectedBookId) ?? bibleBooks[0];
+  const [step, setStep] = useState('book');
+  const [viewMode, setViewMode] = useState('wheel');
+  const [testament, setTestament] = useState(initialBook.testament);
+  const [draftBookId, setDraftBookId] = useState(initialBook.id);
+  const [draftChapter, setDraftChapter] = useState(selectedChapter);
+  const draftBook = bibleBooks.find((book) => book.id === draftBookId) ?? initialBook;
+  const visibleBooks = bibleBooks.filter((book) => book.testament === testament);
+  const chapters = Array.from({ length: draftBook.chapters }, (_, index) => index + 1);
+
+  useEffect(() => {
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
+
+  const updateDraftBook = (bookId) => {
+    const nextBook = bibleBooks.find((book) => book.id === bookId) ?? bibleBooks[0];
+    setDraftBookId(nextBook.id);
+    setDraftChapter((current) => Math.min(current, nextBook.chapters));
+  };
+
+  const changeTestament = (nextTestament) => {
+    setTestament(nextTestament);
+    const currentBook = bibleBooks.find((book) => book.id === draftBookId);
+    if (currentBook?.testament !== nextTestament) {
+      const firstBook = bibleBooks.find((book) => book.testament === nextTestament);
+      if (firstBook) updateDraftBook(firstBook.id);
+    }
+  };
+
+  const chooseGridItem = (value) => {
+    if (step === 'book') {
+      updateDraftBook(value);
+      setStep('chapter');
+      return;
+    }
+    onSelect(draftBook.id, Number(value));
+  };
+
+  const confirmWheelValue = () => {
+    if (step === 'book') {
+      setStep('chapter');
+      return;
+    }
+    onSelect(draftBook.id, draftChapter);
+  };
+
+  const wheelItems = step === 'book'
+    ? visibleBooks.map((book) => ({ value: book.id, label: book.name, meta: `${book.chapters}장` }))
+    : chapters.map((chapter) => ({ value: chapter, label: `${chapter}장` }));
+  const wheelValue = step === 'book' ? draftBook.id : draftChapter;
+
+  return (
+    <div
+      className="passage-picker-overlay"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section className="passage-picker-sheet" role="dialog" aria-modal="true" aria-labelledby="passage-picker-title">
+        <div className="passage-picker-handle" aria-hidden="true" />
+        <header className="passage-picker-header">
+          <div className="passage-picker-heading">
+            {step === 'chapter' && (
+              <button type="button" aria-label="성경 선택으로 돌아가기" title="성경 선택" onClick={() => setStep('book')}>
+                <ChevronLeft size={20} aria-hidden="true" />
+              </button>
+            )}
+            <h2 id="passage-picker-title">{step === 'book' ? '성경 선택' : draftBook.name}</h2>
+          </div>
+          <div className="passage-picker-actions">
+            <button
+              type="button"
+              aria-label={viewMode === 'wheel' ? '격자로 보기' : 'Wheel로 보기'}
+              title={viewMode === 'wheel' ? '격자로 보기' : 'Wheel로 보기'}
+              onClick={() => setViewMode((current) => current === 'wheel' ? 'grid' : 'wheel')}
+            >
+              {viewMode === 'wheel'
+                ? <Grid3X3 size={20} aria-hidden="true" />
+                : <List size={21} aria-hidden="true" />}
+            </button>
+            <button type="button" aria-label="성경 선택 닫기" title="닫기" onClick={onClose}>
+              <X size={20} aria-hidden="true" />
+            </button>
+          </div>
+        </header>
+
+        {step === 'book' && (
+          <div className="picker-testament-tabs" role="tablist" aria-label="성경 구분">
+            {['구약', '신약'].map((item) => (
+              <button
+                className={testament === item ? 'is-active' : ''}
+                key={item}
+                type="button"
+                role="tab"
+                aria-selected={testament === item}
+                onClick={() => changeTestament(item)}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {viewMode === 'wheel' ? (
+          <>
+            <PickerWheel
+              items={wheelItems}
+              value={wheelValue}
+              label={step === 'book' ? '성경 Wheel 선택' : `${draftBook.name} 장 Wheel 선택`}
+              onChange={(value) => {
+                if (step === 'book') updateDraftBook(value);
+                else setDraftChapter(Number(value));
+              }}
+            />
+            <button className="picker-confirm-button" type="button" onClick={confirmWheelValue}>
+              {step === 'book' ? '다음' : `${draftBook.name} ${draftChapter}장 열기`}
+            </button>
+          </>
+        ) : (
+          <div className={`picker-grid ${step === 'chapter' ? 'is-chapter-grid' : ''}`}>
+            {(step === 'book' ? visibleBooks : chapters).map((item) => {
+              const value = step === 'book' ? item.id : item;
+              const label = step === 'book' ? item.name : item;
+              const isSelected = step === 'book'
+                ? draftBook.id === value
+                : draftChapter === Number(value);
+              return (
+                <button
+                  className={isSelected ? 'is-selected' : ''}
+                  key={value}
+                  type="button"
+                  onClick={() => chooseGridItem(value)}
+                >
+                  <strong>{label}</strong>
+                  {step === 'chapter' && <span>장</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function roundedPolygonPath(points, radius = 8) {
+  const uniquePoints = points.filter((point, index) => {
+    if (index === 0) return true;
+    const previous = points[index - 1];
+    return Math.abs(point.x - previous.x) > 0.1 || Math.abs(point.y - previous.y) > 0.1;
+  });
+
+  if (uniquePoints.length < 3) return '';
+
+  const moveToward = (from, to, distance) => {
+    const deltaX = to.x - from.x;
+    const deltaY = to.y - from.y;
+    const length = Math.hypot(deltaX, deltaY) || 1;
+    const amount = Math.min(distance, length / 2);
+    return {
+      x: from.x + (deltaX / length) * amount,
+      y: from.y + (deltaY / length) * amount,
+    };
+  };
+  const formatPoint = ({ x, y }) => `${x.toFixed(2)} ${y.toFixed(2)}`;
+
+  return `${uniquePoints.map((point, index) => {
+    const previous = uniquePoints[(index - 1 + uniquePoints.length) % uniquePoints.length];
+    const next = uniquePoints[(index + 1) % uniquePoints.length];
+    const cornerStart = moveToward(point, previous, radius);
+    const cornerEnd = moveToward(point, next, radius);
+    const prefix = index === 0 ? `M ${formatPoint(cornerStart)}` : `L ${formatPoint(cornerStart)}`;
+    return `${prefix} Q ${formatPoint(point)} ${formatPoint(cornerEnd)}`;
+  }).join(' ')} Z`;
+}
+
+function buildConnectedTextOutline(clientRects, parentRect) {
+  const lineTolerance = 3;
+  const lines = [];
+
+  [...clientRects]
+    .filter((rect) => rect.width > 0 && rect.height > 0)
+    .sort((first, second) => first.top - second.top || first.left - second.left)
+    .forEach((rect) => {
+      const normalized = {
+        left: rect.left - parentRect.left,
+        right: rect.right - parentRect.left,
+        top: rect.top - parentRect.top,
+        bottom: rect.bottom - parentRect.top,
+      };
+      const line = lines.find((candidate) => Math.abs(candidate.top - normalized.top) <= lineTolerance);
+
+      if (line) {
+        line.left = Math.min(line.left, normalized.left);
+        line.right = Math.max(line.right, normalized.right);
+        line.top = Math.min(line.top, normalized.top);
+        line.bottom = Math.max(line.bottom, normalized.bottom);
+      } else {
+        lines.push(normalized);
+      }
+    });
+
+  if (!lines.length) return '';
+
+  const paddedLines = lines.map((line) => ({
+    left: line.left - 4,
+    right: line.right + 4,
+    top: line.top - 1.5,
+    bottom: line.bottom + 1.5,
+  }));
+  const firstLine = paddedLines[0];
+  const lastLine = paddedLines[paddedLines.length - 1];
+  const points = [
+    { x: firstLine.left, y: firstLine.top },
+    { x: firstLine.right, y: firstLine.top },
+  ];
+
+  for (let index = 0; index < paddedLines.length - 1; index += 1) {
+    const currentLine = paddedLines[index];
+    const nextLine = paddedLines[index + 1];
+    const transitionY = (currentLine.bottom + nextLine.top) / 2;
+    points.push(
+      { x: currentLine.right, y: transitionY },
+      { x: nextLine.right, y: transitionY },
+    );
+  }
+
+  points.push(
+    { x: lastLine.right, y: lastLine.bottom },
+    { x: lastLine.left, y: lastLine.bottom },
+  );
+
+  for (let index = paddedLines.length - 2; index >= 0; index -= 1) {
+    const currentLine = paddedLines[index];
+    const nextLine = paddedLines[index + 1];
+    const transitionY = (currentLine.bottom + nextLine.top) / 2;
+    points.push(
+      { x: nextLine.left, y: transitionY },
+      { x: currentLine.left, y: transitionY },
+    );
+  }
+
+  return roundedPolygonPath(points, 8);
+}
+
+function VerseHighlightedText({ text, highlight }) {
+  const textRef = useRef(null);
+  const [circleOutline, setCircleOutline] = useState(null);
+  const isCircle = highlight?.method === 'circle';
+
+  useLayoutEffect(() => {
+    if (!isCircle || !textRef.current) {
+      setCircleOutline(null);
+      return undefined;
+    }
+
+    const textElement = textRef.current;
+    const parentElement = textElement.parentElement;
+    let frameId;
+
+    const measureOutline = () => {
+      const parentRect = parentElement.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(textElement);
+      const path = buildConnectedTextOutline(range.getClientRects(), parentRect);
+      range.detach?.();
+      setCircleOutline({
+        path,
+        width: Math.max(parentRect.width, 1),
+        height: Math.max(parentRect.height, 1),
+      });
+    };
+    const scheduleMeasure = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(measureOutline);
+    };
+
+    scheduleMeasure();
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(scheduleMeasure);
+    resizeObserver?.observe(parentElement);
+    window.addEventListener('resize', scheduleMeasure);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', scheduleMeasure);
+    };
+  }, [isCircle, text]);
+
+  const highlightClassName = highlight && !isCircle
+    ? `is-highlighted highlight-${highlight.method} highlight-${highlight.color}`
+    : '';
+
+  return (
+    <>
+      <span ref={textRef} className={`verse-text ${highlightClassName}`}>{text}</span>
+      {isCircle && circleOutline?.path && (
+        <svg
+          className={`verse-circle-outline highlight-${highlight.color}`}
+          width={circleOutline.width}
+          height={circleOutline.height}
+          viewBox={`0 0 ${circleOutline.width} ${circleOutline.height}`}
+          aria-hidden="true"
+        >
+          <path d={circleOutline.path} />
+        </svg>
+      )}
+    </>
   );
 }
 
@@ -895,13 +1834,22 @@ function BibleView({
   setReadVerseIds,
   verseNotes,
   setVerseNotes,
-  highlightedVerseIds,
-  setHighlightedVerseIds,
+  verseHighlights,
+  setVerseHighlights,
+  lastHighlightStyle,
+  setLastHighlightStyle,
 }) {
   const [selectedVerse, setSelectedVerse] = useState(null);
+  const [highlightPickerVerseId, setHighlightPickerVerseId] = useState('');
+  const [highlightDraft, setHighlightDraft] = useState(lastHighlightStyle);
   const [chapterState, setChapterState] = useState({ status: 'loading', verses: [] });
   const [noteSheet, setNoteSheet] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
+  const [isPassagePickerOpen, setIsPassagePickerOpen] = useState(false);
+  const [recentPassages] = useState(() => {
+    const stored = readStoredValue('bibleon.recentPassages', defaultRecentPassages);
+    return Array.isArray(stored) ? stored.slice(0, 7) : defaultRecentPassages;
+  });
   const longPressTimerRef = useRef(null);
   const pressGestureRef = useRef(null);
   const swipeGestureRef = useRef(null);
@@ -911,6 +1859,7 @@ function BibleView({
   useEffect(() => {
     let isCurrent = true;
     setSelectedVerse(null);
+    setHighlightPickerVerseId('');
     setNoteSheet(null);
 
     if (selectedTranslation === 'RNKSV') {
@@ -947,6 +1896,19 @@ function BibleView({
     : 0;
 
   useEffect(() => {
+    const stored = readStoredValue('bibleon.recentPassages', defaultRecentPassages);
+    const current = Array.isArray(stored) ? stored : defaultRecentPassages;
+    const nextPassage = { bookId: selectedBook.id, chapter: selectedChapter };
+    const next = [
+      nextPassage,
+      ...current.filter((item) => (
+        item.bookId !== nextPassage.bookId || item.chapter !== nextPassage.chapter
+      )),
+    ].slice(0, 7);
+    writeStoredValue('bibleon.recentPassages', next);
+  }, [selectedBook.id, selectedChapter]);
+
+  useEffect(() => {
     setSelectedVerse(null);
     setSelectedRef(
       activeVerses.length
@@ -955,16 +1917,20 @@ function BibleView({
     );
   }, [activeVerses, selectedBook.name, selectedChapter, setSelectedRef]);
 
-  const changeBook = (bookId) => {
+  const selectPassage = (bookId, chapter) => {
     const nextBook = bibleBooks.find((book) => book.id === bookId) ?? bibleBooks[0];
     setSelectedBookId(bookId);
-    setSelectedChapter(nextBook.chapter);
+    setSelectedChapter(Math.min(nextBook.chapters, Math.max(1, chapter)));
+    setSelectedVerse(null);
+    setHighlightPickerVerseId('');
+    setNoteSheet(null);
   };
 
   const moveChapter = (direction) => {
     const nextChapter = Math.min(selectedBook.chapters, Math.max(1, selectedChapter + direction));
     if (nextChapter === selectedChapter) return;
     setSelectedVerse(null);
+    setHighlightPickerVerseId('');
     setNoteSheet(null);
     setSelectedChapter(nextChapter);
   };
@@ -973,10 +1939,30 @@ function BibleView({
     setReadVerseIds((current) => current.includes(verseId) ? current : [...current, verseId]);
   };
 
-  const toggleHighlight = (verseId) => {
-    setHighlightedVerseIds((current) =>
-      current.includes(verseId) ? current.filter((item) => item !== verseId) : [...current, verseId]
-    );
+  const openHighlightPicker = (verseId) => {
+    setHighlightDraft(normalizeHighlightStyle(verseHighlights[verseId] ?? lastHighlightStyle));
+    setHighlightPickerVerseId((current) => current === verseId ? '' : verseId);
+  };
+
+  const handleHighlightButton = (verseId) => {
+    if (!verseHighlights[verseId]) {
+      openHighlightPicker(verseId);
+      return;
+    }
+
+    setVerseHighlights((current) => {
+      const next = { ...current };
+      delete next[verseId];
+      return next;
+    });
+    setHighlightPickerVerseId('');
+  };
+
+  const applyHighlight = (verseId) => {
+    const nextStyle = normalizeHighlightStyle(highlightDraft);
+    setVerseHighlights((current) => ({ ...current, [verseId]: nextStyle }));
+    setLastHighlightStyle(nextStyle);
+    setHighlightPickerVerseId('');
   };
 
   const suppressUpcomingClick = () => {
@@ -997,6 +1983,7 @@ function BibleView({
 
   const openNoteEditor = (verse) => {
     setSelectedVerse(null);
+    setHighlightPickerVerseId('');
     setNoteDraft(verseNotes[verse.id] ?? '');
     setNoteSheet({ mode: 'edit', verse });
   };
@@ -1046,6 +2033,7 @@ function BibleView({
       suppressClickRef.current = false;
       return;
     }
+    setHighlightPickerVerseId('');
     setSelectedVerse((current) => current === verse.id ? null : verse.id);
     setSelectedRef(verse.ref);
   };
@@ -1096,53 +2084,55 @@ function BibleView({
   }, []);
 
   useEffect(() => {
-    if (!noteSheet) return undefined;
+    if (!noteSheet && !highlightPickerVerseId) return undefined;
     const closeOnEscape = (event) => {
-      if (event.key === 'Escape') setNoteSheet(null);
+      if (event.key === 'Escape') {
+        setNoteSheet(null);
+        setHighlightPickerVerseId('');
+      }
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [noteSheet]);
+  }, [highlightPickerVerseId, noteSheet]);
 
   return (
     <div className="page-stack bible-page">
       <section className="recent-reading" aria-label="최근 읽은 성경">
         <div className="recent-reading-list">
-          {bibleBooks.filter((book) => book.progress > 0).slice(0, 3).map((book) => (
-            <button
-              className={`recent-reading-item ${selectedBookId === book.id ? 'is-active' : ''}`}
-              key={book.id}
-              type="button"
-              onClick={() => changeBook(book.id)}
-            >
-              <span>
-                <strong>{book.name} {book.chapter}장</strong>
-                <small>{book.lastRead}</small>
-              </span>
-              <b>{book.progress}%</b>
-            </button>
-          ))}
+          {recentPassages.map((passage) => {
+            const book = bibleBooks.find((item) => item.id === passage.bookId);
+            if (!book) return null;
+            const isActive = selectedBookId === book.id && selectedChapter === passage.chapter;
+            return (
+              <button
+                className={`recent-reading-item ${isActive ? 'is-active' : ''}`}
+                key={`${book.id}-${passage.chapter}`}
+                type="button"
+                onClick={() => selectPassage(book.id, passage.chapter)}
+              >
+                <small>{book.testament}</small>
+                <strong>{book.name}</strong>
+                <span>{passage.chapter}장</span>
+              </button>
+            );
+          })}
         </div>
       </section>
 
       <section className="bible-controls" aria-label="성경 본문 선택">
-        <div className="selector-grid">
+        <button
+          className="passage-picker-trigger"
+          type="button"
+          aria-haspopup="dialog"
+          onClick={() => setIsPassagePickerOpen(true)}
+        >
           <Search className="passage-search-icon" size={18} aria-hidden="true" />
-          <label className="select-control">
-            <select aria-label="성경 선택" value={selectedBookId} onChange={(event) => changeBook(event.target.value)}>
-              {bibleBooks.map((book) => <option key={book.id} value={book.id}>{book.name}</option>)}
-            </select>
-            <ChevronDown size={15} aria-hidden="true" />
-          </label>
-          <label className="select-control chapter-control">
-            <select aria-label="장 선택" value={selectedChapter} onChange={(event) => setSelectedChapter(Number(event.target.value))}>
-              {Array.from({ length: selectedBook.chapters }, (_, index) => index + 1).map((chapter) => (
-                <option key={chapter} value={chapter}>{chapter}장</option>
-              ))}
-            </select>
-            <ChevronDown size={15} aria-hidden="true" />
-          </label>
-        </div>
+          <span>
+            <strong>{selectedBook.name}</strong>
+            <small>{selectedChapter}장</small>
+          </span>
+          <ChevronDown size={16} aria-hidden="true" />
+        </button>
         <div className="translation-tabs" aria-label="성경 번역본 선택">
           {translations.map((translation) => (
             <button
@@ -1158,11 +2148,6 @@ function BibleView({
         </div>
       </section>
 
-      <section className="reading-status">
-        <div><span>이 장의 읽기 기록</span><strong>{chapterReadCount}절 읽음</strong></div>
-        <div className="reading-status-progress"><ProgressBar value={chapterProgress} /><span>{chapterProgress}%</span></div>
-      </section>
-
       <article
         className="reader-surface"
         onPointerDown={handleReaderPointerDown}
@@ -1176,9 +2161,15 @@ function BibleView({
             <h2>{selectedBook.name} {selectedChapter}장</h2>
             <p>{selectedTranslation === 'KRV' ? '개역한글 전문' : '원문 데이터 준비 중'}</p>
           </div>
-          <button className="icon-button small" type="button" aria-label="본문 메뉴" title="본문 메뉴">
-            <MoreHorizontal size={20} aria-hidden="true" />
-          </button>
+          <div className="reader-header-side">
+            <button className="icon-button small" type="button" aria-label="본문 메뉴" title="본문 메뉴">
+              <MoreHorizontal size={20} aria-hidden="true" />
+            </button>
+            <div className="reader-progress" aria-label={`${chapterProgress}% 읽음`}>
+              <ProgressBar value={chapterProgress} />
+              <span>{chapterProgress}%</span>
+            </div>
+          </div>
         </header>
 
         {chapterState.status === 'loading' && (
@@ -1210,10 +2201,11 @@ function BibleView({
             const isRead = readVerseIds.includes(verse.id);
             const isSelected = selectedVerse === verse.id;
             const hasNote = Boolean(verseNotes[verse.id]?.trim());
-            const isHighlighted = highlightedVerseIds.includes(verse.id);
+            const highlight = verseHighlights[verse.id];
+            const isHighlighted = Boolean(highlight);
             return (
               <div
-                className={`verse-wrap ${isSelected ? 'is-selected' : ''} ${isHighlighted ? 'is-highlighted' : ''}`}
+                className={`verse-wrap ${isSelected ? 'is-selected' : ''}`}
                 key={verse.id}
               >
                 <button
@@ -1233,7 +2225,9 @@ function BibleView({
                     {hasNote && <NotebookPen className="verse-note-indicator" size={10} aria-hidden="true" />}
                     <span>{verse.verse}</span>
                   </span>
-                  <span className="verse-copy">{verse.text}</span>
+                  <span className="verse-copy">
+                    <VerseHighlightedText text={verse.text} highlight={highlight} />
+                  </span>
                 </button>
                 {isSelected && (
                   <div className="verse-actions" aria-label={`${verse.ref} 동작`}>
@@ -1241,9 +2235,50 @@ function BibleView({
                     <button className={hasNote ? 'is-on' : ''} type="button" onClick={() => openNoteEditor(verse)}>
                       <NotebookPen size={16} aria-hidden="true" />{hasNote ? '메모 수정' : '메모'}
                     </button>
-                    <button className={isHighlighted ? 'is-on' : ''} type="button" onClick={() => toggleHighlight(verse.id)}>
+                    <button className={isHighlighted ? 'is-on' : ''} type="button" onClick={() => handleHighlightButton(verse.id)}>
                       <Highlighter size={16} aria-hidden="true" />{isHighlighted ? '강조 해제' : '강조'}
                     </button>
+                    {highlightPickerVerseId === verse.id && (
+                      <div className="highlight-popover" role="dialog" aria-label={`${verse.ref} 강조 설정`}>
+                        <div className="highlight-method-row" aria-label="강조 방식">
+                          {highlightMethodOptions.map((option) => {
+                            const MethodIcon = option.icon;
+                            const isActive = highlightDraft.method === option.id;
+                            return (
+                              <button
+                                className={isActive ? 'is-active' : ''}
+                                type="button"
+                                key={option.id}
+                                aria-pressed={isActive}
+                                title={option.label}
+                                onClick={() => setHighlightDraft((current) => ({ ...current, method: option.id }))}
+                              >
+                                <MethodIcon size={15} aria-hidden="true" /><span>{option.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="highlight-color-row" aria-label="강조 색상">
+                          {highlightColorOptions.map((option) => {
+                            const isActive = highlightDraft.color === option.id;
+                            return (
+                              <button
+                                className={`highlight-color-${option.id} ${isActive ? 'is-active' : ''}`}
+                                type="button"
+                                key={option.id}
+                                aria-label={option.label}
+                                aria-pressed={isActive}
+                                title={option.label}
+                                onClick={() => setHighlightDraft((current) => ({ ...current, color: option.id }))}
+                              >
+                                {isActive && <Check size={13} aria-hidden="true" />}
+                              </button>
+                            );
+                          })}
+                          <button className="highlight-apply" type="button" onClick={() => applyHighlight(verse.id)}>적용</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1268,6 +2303,18 @@ function BibleView({
           </span>
         </div>
       </article>
+
+      {isPassagePickerOpen && (
+        <PassagePickerSheet
+          selectedBookId={selectedBookId}
+          selectedChapter={selectedChapter}
+          onClose={() => setIsPassagePickerOpen(false)}
+          onSelect={(bookId, chapter) => {
+            selectPassage(bookId, chapter);
+            setIsPassagePickerOpen(false);
+          }}
+        />
+      )}
 
       {noteSheet && (
         <div
@@ -1465,13 +2512,23 @@ function MessageView({ conversations, setConversations }) {
   const [openConversationId, setOpenConversationId] = useState('');
   const [memberQuery, setMemberQuery] = useState('');
   const [selectedMemberProfile, setSelectedMemberProfile] = useState(null);
-  const openConversation = conversations.find(({ id }) => id === openConversationId);
+  const [groupBuilderOpen, setGroupBuilderOpen] = useState(false);
+  const [draftConversation, setDraftConversation] = useState(null);
+  const storedOpenConversation = conversations.find(({ id }) => id === openConversationId);
+  const openConversation = storedOpenConversation
+    ?? (draftConversation?.id === openConversationId ? draftConversation : null);
   const normalizedQuery = memberQuery.trim().toLowerCase();
-  const filteredConversations = conversations.filter((conversation) =>
-    [conversation.name, conversation.department, conversation.role]
+  const filteredConversations = conversations.filter((conversation) => (
+    [
+      conversation.name,
+      conversation.department,
+      conversation.role,
+      ...getConversationParticipants(getConversationParticipantIds(conversation)).map(({ name }) => name),
+    ]
+      .filter(Boolean)
       .some((value) => value.toLowerCase().includes(normalizedQuery))
-  );
-  const recentConversationIds = new Set(conversations.map(({ id }) => id));
+  ));
+  const recentConversationIds = new Set(conversations.flatMap(getConversationParticipantIds));
   const filteredDirectoryMembers = churchDirectoryMembers.filter((member) => (
     !recentConversationIds.has(member.id)
     && [member.name, member.department, member.role]
@@ -1479,35 +2536,68 @@ function MessageView({ conversations, setConversations }) {
   ));
 
   const selectConversation = (conversationId) => {
+    setDraftConversation(null);
     setOpenConversationId(conversationId);
     setConversations((current) => current.map((conversation) => (
       conversation.id === conversationId ? { ...conversation, unread: 0 } : conversation
     )));
   };
 
+  const openDraftConversation = (members, customName = '') => {
+    const participantIds = members
+      .map(({ id }) => id)
+      .sort((firstId, secondId) => {
+        const first = churchMessageMembers.find(({ id }) => id === firstId);
+        const second = churchMessageMembers.find(({ id }) => id === secondId);
+        return first.name.localeCompare(second.name, 'ko-KR');
+      });
+    const conversation = {
+      id: `draft-${Date.now()}-${participantIds.join('-')}`,
+      ...getConversationDetails(participantIds, customName),
+      online: false,
+      unread: 0,
+      time: '',
+      lastMessage: '',
+      participantIds,
+      participantJoinedAt: Object.fromEntries(participantIds.map((id) => [id, 0])),
+      messages: [],
+      isDraft: true,
+    };
+    setDraftConversation(conversation);
+    setOpenConversationId(conversation.id);
+  };
+
   const startMemberConversation = (member) => {
-    const existingConversation = conversations.find(({ id }) => id === member.id);
-    if (!existingConversation) {
-      setConversations((current) => [
-        {
-          id: member.id,
-          name: member.name,
-          department: member.department,
-          role: member.role,
-          online: false,
-          unread: 0,
-          time: '방금',
-          lastMessage: '새 대화를 시작했어요.',
-          participantIds: [member.id],
-          messages: [
-            { id: `${member.id}-start`, from: 'system', text: `${member.name}님과의 대화를 시작했어요.`, time: '방금' },
-          ],
-        },
-        ...current,
-      ]);
-    }
+    const existingConversation = conversations.find((conversation) => {
+      const participantIds = getConversationParticipantIds(conversation);
+      return participantIds.length === 1 && participantIds[0] === member.id;
+    });
     setSelectedMemberProfile(null);
-    setOpenConversationId(member.id);
+    if (existingConversation) selectConversation(existingConversation.id);
+    else openDraftConversation([member]);
+  };
+
+  const startGroupConversation = (members, customName) => {
+    setGroupBuilderOpen(false);
+    openDraftConversation(members, customName);
+  };
+
+  const createGroupFromConversation = (currentParticipantIds, invitedMembers, customName) => {
+    const currentParticipants = getConversationParticipants(currentParticipantIds);
+    setDraftConversation(null);
+    openDraftConversation([...currentParticipants, ...invitedMembers], customName);
+  };
+
+  const closeConversation = () => {
+    setOpenConversationId('');
+    setDraftConversation(null);
+  };
+
+  const persistDraftConversation = (conversation) => {
+    const { isDraft, ...persistedConversation } = conversation;
+    setConversations((current) => [persistedConversation, ...current]);
+    setDraftConversation(null);
+    setOpenConversationId(persistedConversation.id);
   };
 
   return (
@@ -1547,6 +2637,13 @@ function MessageView({ conversations, setConversations }) {
             </button>
           )}
         </label>
+        {directoryMode === 'members' && (
+          <button className="message-group-create" type="button" onClick={() => setGroupBuilderOpen(true)}>
+            <span><Users size={20} aria-hidden="true" /></span>
+            <span><strong>단체 채팅 만들기</strong><small>여러 구성원을 선택해 대화를 시작해요</small></span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+        )}
         {directoryMode === 'recent' ? (
           <div className="conversation-list">
             {filteredConversations.map((conversation) => (
@@ -1556,7 +2653,11 @@ function MessageView({ conversations, setConversations }) {
                 key={conversation.id}
                 onClick={() => selectConversation(conversation.id)}
               >
-                <span className="member-avatar" aria-hidden="true"><UserRound className="default-profile-glyph" /></span>
+                <span className="member-avatar" aria-hidden="true">
+                  {getConversationParticipantIds(conversation).length > 1
+                    ? <Users className="default-profile-glyph" />
+                    : <UserRound className="default-profile-glyph" />}
+                </span>
                 <span className="conversation-copy">
                   <span><strong>{conversation.name}</strong><small>{conversation.department} · {conversation.role}</small></span>
                   <p>{conversation.lastMessage}</p>
@@ -1599,12 +2700,27 @@ function MessageView({ conversations, setConversations }) {
         />
       )}
 
+      {groupBuilderOpen && (
+        <MemberSelectionSheet
+          title="단체 채팅 만들기"
+          description="함께 대화할 구성원을 선택하세요"
+          candidates={churchMessageMembers}
+          minimumSelection={2}
+          roomNameEnabled
+          confirmLabel={(count) => `${count}명과 대화 시작`}
+          onClose={() => setGroupBuilderOpen(false)}
+          onConfirm={startGroupConversation}
+        />
+      )}
+
       {openConversation && (
         <MessageRoom
           conversation={openConversation}
-          conversations={conversations}
           setConversations={setConversations}
-          onBack={() => setOpenConversationId('')}
+          onBack={closeConversation}
+          onPersistDraft={persistDraftConversation}
+          onUpdateDraft={setDraftConversation}
+          onCreateGroup={createGroupFromConversation}
         />
       )}
     </div>
@@ -1641,7 +2757,103 @@ function MemberProfileSheet({ member, onClose, onMessage }) {
   );
 }
 
-function MessageRoom({ conversation, conversations, setConversations, onBack }) {
+function MemberSelectionSheet({
+  title,
+  description,
+  candidates,
+  minimumSelection = 1,
+  roomNameEnabled = false,
+  confirmLabel,
+  onClose,
+  onConfirm,
+}) {
+  const [query, setQuery] = useState('');
+  const [roomName, setRoomName] = useState('');
+  const [selectedIds, setSelectedIds] = useState([]);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredCandidates = candidates.filter((member) => (
+    [member.name, member.department, member.role]
+      .some((value) => value.toLowerCase().includes(normalizedQuery))
+  ));
+  const selectedMembers = candidates.filter(({ id }) => selectedIds.includes(id));
+
+  const toggleMember = (memberId) => {
+    setSelectedIds((current) => (
+      current.includes(memberId)
+        ? current.filter((id) => id !== memberId)
+        : [...current, memberId]
+    ));
+  };
+
+  return (
+    <div className="member-picker-layer">
+      <button className="member-picker-backdrop" type="button" aria-label={`${title} 닫기`} onClick={onClose} />
+      <section className="member-picker-sheet" role="dialog" aria-modal="true" aria-labelledby="member-picker-title">
+        <header>
+          <div><h2 id="member-picker-title">{title}</h2><p>{description}</p></div>
+          <button type="button" aria-label={`${title} 닫기`} onClick={onClose}><X size={21} aria-hidden="true" /></button>
+        </header>
+        <div className="member-picker-controls">
+          {roomNameEnabled && (
+            <label className="member-picker-room-name">
+              <span>채팅방 이름 <small>선택</small></span>
+              <input
+                aria-label="단체 채팅방 이름"
+                maxLength={30}
+                value={roomName}
+                onChange={(event) => setRoomName(event.target.value)}
+                placeholder="예: 청년부 예배 준비팀"
+              />
+            </label>
+          )}
+          <label className="member-picker-search">
+            <Search size={18} aria-hidden="true" />
+            <input
+              aria-label="초대할 구성원 검색"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="이름 또는 부서 검색"
+            />
+            {query && <button type="button" aria-label="검색어 지우기" onClick={() => setQuery('')}><X size={16} /></button>}
+          </label>
+        </div>
+        <div className="member-picker-list">
+          {filteredCandidates.map((member) => {
+            const selected = selectedIds.includes(member.id);
+            return (
+              <button
+                className={selected ? 'is-selected' : ''}
+                type="button"
+                aria-pressed={selected}
+                key={member.id}
+                onClick={() => toggleMember(member.id)}
+              >
+                <span className={`directory-avatar tone-${member.tone ?? 'violet'}`} aria-hidden="true">
+                  <UserRound className="default-profile-glyph" />
+                </span>
+                <span><strong>{member.name}</strong><small>{member.department} · {member.role}</small></span>
+                <i aria-hidden="true">{selected && <Check size={16} />}</i>
+              </button>
+            );
+          })}
+          {filteredCandidates.length === 0 && <p>검색 결과가 없어요.</p>}
+        </div>
+        <footer>
+          <span>{selectedMembers.length}명 선택</span>
+          <button
+            type="button"
+            disabled={selectedMembers.length < minimumSelection}
+            onClick={() => onConfirm(selectedMembers, roomName.trim())}
+          >
+            {confirmLabel(selectedMembers.length)}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, onUpdateDraft, onCreateGroup }) {
   const [draft, setDraft] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [messageQuery, setMessageQuery] = useState('');
@@ -1649,16 +2861,14 @@ function MessageRoom({ conversation, conversations, setConversations, onBack }) 
   const [inviteOpen, setInviteOpen] = useState(false);
   const searchInputRef = useRef(null);
   const messageListRef = useRef(null);
-  const participantIds = conversation.participantIds ?? [conversation.id];
-  const participants = conversations.filter(({ id }) => participantIds.includes(id));
-  const inviteCandidates = conversations.filter(({ id }) => !participantIds.includes(id));
+  const participantIds = getConversationParticipantIds(conversation);
+  const participants = getConversationParticipants(participantIds);
+  const inviteCandidates = churchMessageMembers.filter(({ id }) => !participantIds.includes(id));
   const normalizedMessageQuery = messageQuery.trim().toLowerCase();
   const visibleMessages = normalizedMessageQuery
     ? conversation.messages.filter((message) => message.text.toLowerCase().includes(normalizedMessageQuery))
     : conversation.messages;
-  const roomTitle = participants.length > 1
-    ? `${participants[0].name} 외 ${participants.length - 1}명`
-    : conversation.name;
+  const roomTitle = conversation.customName || getConversationDetails(participantIds).name;
 
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus();
@@ -1671,6 +2881,12 @@ function MessageRoom({ conversation, conversations, setConversations, onBack }) 
   }, [conversation.messages.length, searchOpen]);
 
   const updateConversation = (updater) => {
+    if (conversation.isDraft) {
+      onUpdateDraft((current) => (
+        current?.id === conversation.id ? updater(current) : current
+      ));
+      return;
+    }
     setConversations((current) => current.map((item) => (
       item.id === conversation.id ? updater(item) : item
     )));
@@ -1680,7 +2896,7 @@ function MessageRoom({ conversation, conversations, setConversations, onBack }) 
     event.preventDefault();
     const text = draft.trim();
     if (!text) return;
-    updateConversation((current) => ({
+    const appendMessage = (current) => ({
       ...current,
       lastMessage: text,
       time: '방금',
@@ -1688,23 +2904,44 @@ function MessageRoom({ conversation, conversations, setConversations, onBack }) 
         ...current.messages,
         { id: `${current.id}-${Date.now()}`, from: 'me', text, time: '방금' },
       ],
-    }));
+    });
+    if (conversation.isDraft) onPersistDraft(appendMessage(conversation));
+    else updateConversation(appendMessage);
     setDraft('');
   };
 
-  const inviteParticipant = (candidate) => {
+  const inviteParticipants = (selectedMembers, customName) => {
+    if (participantIds.length === 1) {
+      setInviteOpen(false);
+      setMenuOpen(false);
+      onCreateGroup(participantIds, selectedMembers, customName);
+      return;
+    }
+
     updateConversation((current) => {
-      const currentParticipantIds = current.participantIds ?? [current.id];
-      if (currentParticipantIds.includes(candidate.id)) return current;
+      const currentParticipantIds = getConversationParticipantIds(current);
+      const nextParticipantIds = [...new Set([
+        ...currentParticipantIds,
+        ...selectedMembers.map(({ id }) => id),
+      ])];
+      const invitedNames = selectedMembers.map(({ name }) => name).join(', ');
+      const joinedAtMessageIndex = current.messages.length;
+      const participantJoinedAt = {
+        ...Object.fromEntries(currentParticipantIds.map((id) => [id, current.participantJoinedAt?.[id] ?? 0])),
+        ...Object.fromEntries(selectedMembers.map(({ id }) => [id, joinedAtMessageIndex])),
+      };
       return {
         ...current,
-        participantIds: [...currentParticipantIds, candidate.id],
+        ...getConversationDetails(nextParticipantIds, current.customName),
+        participantIds: nextParticipantIds,
+        participantJoinedAt,
         messages: [
           ...current.messages,
-          { id: `${current.id}-invite-${candidate.id}`, from: 'system', text: `${candidate.name}님을 대화에 초대했어요.`, time: '방금' },
+          { id: `${current.id}-invite-${Date.now()}`, from: 'system', text: `${invitedNames}님을 대화에 초대했어요.`, time: '방금' },
         ],
       };
     });
+    setInviteOpen(false);
   };
 
   const closeSearch = () => {
@@ -1807,20 +3044,9 @@ function MessageRoom({ conversation, conversations, setConversations, onBack }) 
                   </div>
                 ))}
               </div>
-              <button className="chat-invite-button" type="button" onClick={() => setInviteOpen((current) => !current)}>
+              <button className="chat-invite-button" type="button" onClick={() => setInviteOpen(true)}>
                 <UserPlus size={18} aria-hidden="true" />대화 상대 초대
               </button>
-              {inviteOpen && (
-                <div className="chat-invite-list">
-                  {inviteCandidates.length > 0 ? inviteCandidates.map((candidate) => (
-                    <button type="button" key={candidate.id} onClick={() => inviteParticipant(candidate)}>
-                      <span className="member-avatar" aria-hidden="true"><UserRound className="default-profile-glyph" /></span>
-                      <span><strong>{candidate.name}</strong><small>{candidate.department}</small></span>
-                      <i>초대</i>
-                    </button>
-                  )) : <p>초대할 구성원이 없어요.</p>}
-                </div>
-              )}
             </section>
 
             <section className="chat-setting-list">
@@ -1845,6 +3071,20 @@ function MessageRoom({ conversation, conversations, setConversations, onBack }) 
             </section>
           </aside>
         </div>
+      )}
+
+      {inviteOpen && (
+        <MemberSelectionSheet
+          title={participantIds.length === 1 ? '새 단체 채팅 만들기' : '대화 상대 초대'}
+          description={participantIds.length === 1
+            ? '현재 대화 내용은 새 채팅방에 포함되지 않아요'
+            : '새 구성원은 초대 이후의 대화만 볼 수 있어요'}
+          candidates={inviteCandidates}
+          roomNameEnabled={participantIds.length === 1}
+          confirmLabel={(count) => `${count}명 초대`}
+          onClose={() => setInviteOpen(false)}
+          onConfirm={inviteParticipants}
+        />
       )}
     </section>
   );

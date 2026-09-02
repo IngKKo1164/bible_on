@@ -1,26 +1,25 @@
-import React, { useId } from 'react';
+import React from 'react';
 
-export function BibleOnLogo({ size = 52, className = '', ...props }) {
-  const clipId = `bibleon-logo-${useId().replace(/:/g, '')}`;
+const transparentLogoSource = '/assets/brand/bibleon-mark.png';
 
+const logoSources = {
+  app: transparentLogoSource,
+  mark: transparentLogoSource,
+  white: transparentLogoSource,
+};
+
+export function BibleOnLogo({ size = 52, variant = 'mark', className = '', alt = '', ...props }) {
   return (
-    <svg className={`bibleon-logo ${className}`.trim()} width={size} height={size} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>
-      <defs>
-        <clipPath id={clipId}>
-          <rect x="2" y="2" width="60" height="60" rx="15" />
-        </clipPath>
-      </defs>
-      <g clipPath={`url(#${clipId})`}>
-        <rect x="2" y="2" width="60" height="60" fill="#a59ac9" />
-        <path d="M39 2H62V62H24L39 2Z" fill="#4b4298" />
-      </g>
-      <rect x="2.75" y="2.75" width="58.5" height="58.5" rx="14.25" stroke="#37306f" strokeOpacity="0.18" strokeWidth="1.5" />
-      <path
-        fill="#fff"
-        fillRule="evenodd"
-        d="M18 14.5C18 11.46 20.46 9 23.5 9H35C43.7 9 49 13.62 49 21.2C49 26.15 46.5 29.72 42.25 31.55C47.4 33.2 50.5 37.15 50.5 42.55C50.5 50.52 44.73 55 35.15 55H23.5C20.46 55 18 52.54 18 49.5V14.5ZM28 18V27.5H34.2C37.85 27.5 39.8 25.85 39.8 22.7C39.8 19.62 37.85 18 34.2 18H28ZM28 36V46H35C39.05 46 41.25 44.27 41.25 40.95C41.25 37.65 39.05 36 35 36H28Z"
-      />
-    </svg>
+    <img
+      className={`bibleon-logo ${className}`.trim()}
+      src={logoSources[variant] ?? logoSources.mark}
+      width={size}
+      height={size}
+      alt={alt}
+      draggable="false"
+      decoding="async"
+      {...props}
+    />
   );
 }
 

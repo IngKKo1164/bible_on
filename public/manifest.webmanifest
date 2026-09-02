@@ -1,0 +1,17 @@
+{
+  "name": "바이블온",
+  "short_name": "바이블온",
+  "description": "성경 읽기와 교회 공동체를 위한 바이블온",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f4f6",
+  "theme_color": "#f3f4f6",
+  "icons": [
+    {
+      "src": "/assets/brand/bibleon-app-icon.png",
+      "sizes": "1280x1280",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
