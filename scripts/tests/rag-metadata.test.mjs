@@ -7,6 +7,7 @@ import {
   parseOpenBibleTopicVoteLine,
   parseStepOriginalLine,
   selectMetadataChannels,
+  validateAuthorizedCommentary,
   validateDatingClaim,
 } from '../lib/rag-metadata.mjs';
 
@@ -47,10 +48,31 @@ test('joins OpenBible topic scores and votes through the same canonical range', 
 });
 
 test('routes only metadata channels indicated by the question', () => {
-  assert.deepEqual(selectMetadataChannels('불안할 때 읽을 말씀을 추천해줘'), ['topics', 'relations']);
+  assert.deepEqual(
+    selectMetadataChannels('불안할 때 읽을 말씀을 추천해줘'),
+    ['topics', 'commentary', 'relations'],
+  );
   assert.deepEqual(
     selectMetadataChannels('창세기 1장 히브리어 원어와 기록 시기를 알려줘'),
-    ['topics', 'originalLanguage', 'relations', 'datingClaims'],
+    ['topics', 'commentary', 'originalLanguage', 'relations', 'datingClaims'],
+  );
+});
+
+test('accepts only commentary with explicit rights evidence and a source locator', () => {
+  const commentary = {
+    schemaVersion: 1,
+    type: 'authorized_commentary',
+    id: 'example:genesis-1-1',
+    reference: { start: 'Gen.1.1', end: 'Gen.1.1' },
+    title: 'Example commentary',
+    content: 'An authorized sample explanation.',
+    source: { title: 'Example source', locator: 'p. 1', license: 'Example license' },
+    rights: { status: 'licensed', evidence: 'Contract reference 1' },
+  };
+  assert.equal(validateAuthorizedCommentary(commentary), commentary);
+  assert.throws(
+    () => validateAuthorizedCommentary({ ...commentary, rights: { status: 'licensed' } }),
+    /rights and evidence/,
   );
 });
 

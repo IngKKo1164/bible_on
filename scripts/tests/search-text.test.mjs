@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildBm25Index,
+  createSearchHypotheses,
   expandQueryForSearch,
   expandQueryForEmbedding,
   normalizeSearchText,
@@ -44,6 +45,15 @@ test('expresses recommendation intent as natural language for semantic retrieval
   assert.match(expandQueryForEmbedding('걱정될 때'), /평안과 위로/);
   assert.match(expandQueryForEmbedding('다른 사람을 용서하고 싶어요'), /서로 용서/);
   assert.equal(expandQueryForEmbedding('태초에 천지를 창조'), '태초에 천지를 창조');
+});
+
+test('keeps the user query and adds deterministic search hypotheses without answering it', () => {
+  const hypotheses = createSearchHypotheses('교회 사람에게 상처받아서 다시 가기 싫어요');
+
+  assert.equal(hypotheses[0].kind, 'user_query');
+  assert.equal(hypotheses[0].text, '교회 사람에게 상처받아서 다시 가기 싫어요');
+  assert(hypotheses.some((hypothesis) => hypothesis.id === 'betrayal-hurt'));
+  assert(hypotheses.every((hypothesis) => hypothesis.weight > 0 && hypothesis.weight <= 1));
 });
 
 test('omits ambiguous GAE Psalm music-director headings only from retrieval text', () => {

@@ -61,6 +61,14 @@ export async function createMetadataRepository({ repositoryRoot } = {}) {
         );
         return { byVerse: new Map(records.map((record) => [record.verseId, record])) };
       }
+      if (channel === 'commentary') {
+        const records = await loadJsonLines(path.join(metadataRoot, manifest.files.commentary.path));
+        const byVerse = new Map();
+        for (const record of records) {
+          record.verseIds.forEach((verseId) => addToIndex(byVerse, verseId, record));
+        }
+        return { byVerse };
+      }
       if (channel === 'relations') {
         const [editorialEdges, lemmaRecords] = await Promise.all([
           loadJsonLines(path.join(derivedRoot, 'cross-references.jsonl')),
@@ -101,6 +109,7 @@ export async function createMetadataRepository({ repositoryRoot } = {}) {
     const result = {
       channels: requestedChannels,
       topics: [],
+      commentary: [],
       originalLanguage: [],
       relations: { editorial: [], sharedLemma: [] },
       datingClaims: [],
@@ -125,6 +134,12 @@ export async function createMetadataRepository({ repositoryRoot } = {}) {
       result.originalLanguage = verseIds
         .map((verseId) => loaded.originalLanguage.byVerse.get(verseId))
         .filter(Boolean);
+    }
+
+    if (loaded.commentary) {
+      result.commentary = uniqueById(verseIds.flatMap((verseId) => (
+        loaded.commentary.byVerse.get(verseId) ?? []
+      )));
     }
 
     if (loaded.relations) {

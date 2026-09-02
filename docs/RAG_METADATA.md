@@ -1,95 +1,102 @@
-# RAG metadata architecture
+# RAG retrieval and metadata architecture
 
-## Principle
+## Core rule
 
-Bible passages remain the only text embedded for semantic retrieval. Every passage already carries
-canonical OSIS `verseIds`; topic, original-language, relation, and dating records are stored
-separately and joined through those IDs after retrieval.
+Every source is stored in its own channel and linked through canonical OSIS verse IDs. Bible text,
+OpenBible topics, authorized commentary, original-language tokens, and editorial cross references
+must remain distinguishable so the answer layer can cite what supplied each claim.
 
-This avoids four problems:
+OpenBible topics are now part of retrieval, not merely metadata attached after a passage is found.
+Original-language data and dating claims remain post-retrieval evidence because they are normally
+used to inspect an already selected passage rather than discover one.
 
-- the same metadata being copied into both Korean translations and every heading-based passage;
-- long metadata fields distorting the semantic embedding of the Bible text;
-- a source update requiring the full passage/vector index to be rebuilt;
-- uncertain claims, especially dating and allusion claims, appearing to be part of the Bible text.
+## Retrieval index
 
-## Generated stores
+`npm run data:rag-index` creates four independent semantic views:
 
-`npm run data:rag-metadata` writes local, reproducible output to `data/rag/metadata/`.
-
-| File | Unit | Purpose |
+| View | Vector unit | Link back to the Bible |
 | --- | --- | --- |
-| `topics.jsonl` | OpenBible topic | Stable topic identity and attribution |
-| `topic-associations.jsonl` | topic to verse range | Quality score, votes, snapshot provenance |
-| `original-language.jsonl` | canonical verse | TAHOT/TAGNT token arrays with surface, lemma, Strong, morphology, and variants |
-| `lemma-verse-index.jsonl` | Strong lemma | Dynamic `shared_lemma` links without a pairwise edge explosion |
-| `dating-claims.jsonl` | sourced claim | Multiple competing date ranges without manufacturing a consensus |
+| `body` | one translated verse | translation-specific passage and canonical verse IDs |
+| `heading_scene` | one source heading or scene | translation-specific heading passage |
+| `topic` | one OpenBible topic label | topic-to-verse reverse index |
+| `commentary` | one authorized commentary record or token window | canonical verse IDs |
 
-OpenBible cross references remain in `data/rag/derived/cross-references.jsonl` and are explicitly
-typed as `editorial_cross_reference`. Quotation, allusion, parallel, and thematic relations must not
-be inferred from that label; they require their own curated evidence later.
+The same user question is also sent to BM25. Vector similarities from different views are never
+treated as if they shared an absolute score scale. Each channel produces a ranked list and the
+lists are combined with weighted reciprocal rank fusion (RRF).
+
+No adjacent-passage vector is stored. Neighboring text can be loaded after a passage is selected
+when the answer needs literary context, but surrounding literal wording is not treated as a proxy
+for implicit meaning during retrieval.
 
 ## Query flow
 
-1. BM25 and local E5 retrieve a Korean heading-based passage.
-2. One-hop OpenBible graph expansion may add related candidate passages.
-3. The final passage `verseIds` are passed to `metadata-repository.mjs`.
-4. A deterministic intent selector loads only the needed channels.
-5. The answer layer receives Bible text and attributed metadata as distinct fields.
+1. Preserve the original question as the first retrieval hypothesis.
+2. Add bounded, deterministic search hypotheses for recognized pastoral situations such as anxiety,
+   guidance, hurt, grief, loneliness, failure, or guilt. These are search formulations, not answers.
+3. Run BM25 against Korean heading-based passages.
+4. Embed each hypothesis separately and search verse body, heading/scene, OpenBible topic, and
+   authorized commentary views.
+5. Resolve topic hits through `topic-links-top.json`, then map canonical verse IDs to the requested
+   Korean translation.
+6. Fuse the ranked candidate lists with weighted RRF and freeze that direct ranking.
+7. Expand only the highest direct candidates through outgoing OpenBible editorial cross references.
+   Graph-added candidates never become new seeds, so expansion is exactly one hop.
+8. Load post-retrieval evidence and return every channel with its provenance to the answer layer.
 
-The current selector always includes topics and editorial relations. Original-language data is
-added for questions mentioning original languages, lemmas, morphology, or Strong numbers. Dating
-claims are added only for dating, composition, redaction, or manuscript questions. The caller can
-override this with `--metadata=all`, an explicit channel list, or `--metadata=none`.
+There is no separate hard or soft question router in this stage. All core retrieval views run for
+each hypothesis. This avoids duplicating the semantic work already done by query hypotheses and
+keeps routing mistakes from suppressing useful evidence.
 
-## Dating claims
+## Generated stores
 
-`data/rag/curated/dating-claims.jsonl` is intentionally empty until an approved scholarly source is
-selected. A claim must include a scope, date type, range, viewpoint, confidence, and precise source
-locator. Multiple records may cover the same passage.
+`npm run data:rag-metadata` writes reproducible output to `data/rag/metadata/`.
+
+| File | Unit | Purpose |
+| --- | --- | --- |
+| `topics.jsonl` | OpenBible topic | stable topic identity, label, and attribution |
+| `topic-associations.jsonl` | topic to verse range | quality score, votes, and snapshot provenance |
+| `commentary-passages.jsonl` | authorized commentary | licensed explanation linked to canonical verses |
+| `original-language.jsonl` | canonical verse | TAHOT/TAGNT tokens, lemmas, Strong IDs, morphology, variants |
+| `lemma-verse-index.jsonl` | Strong lemma | dynamic shared-lemma links without pairwise edge explosion |
+| `dating-claims.jsonl` | sourced claim | competing date ranges without manufacturing a consensus |
+
+OpenBible cross references remain in `data/rag/derived/cross-references.jsonl` and are typed as
+`editorial_cross_reference`. Quotation, allusion, parallel, and thematic relations must not be
+inferred from that label; each would need separately curated evidence.
+
+## Authorized commentary
+
+The repository contains the validation schema but no commentary text by default. Place authorized
+records in the ignored local file `data/rag/curated/commentary-passages.jsonl`. The build accepts a
+record only when it includes a precise source locator, license, rights status, and evidence of those
+rights. It then expands the canonical reference range and includes the text in the commentary vector
+view. Missing input produces an empty, valid commentary channel rather than invented explanation.
 
 ```json
-{"schemaVersion":1,"type":"dating_claim","id":"source-id:claim-id","scope":{"kind":"book","start":"Gen.1.1","end":"Gen.50.26"},"dateType":"composition","range":{"earliestYear":-600,"latestYear":-400,"convention":"negative_bce_positive_ce"},"viewpoint":"Name of the represented position","confidence":"unspecified","source":{"title":"Bibliographic title","locator":"p. 10"}}
+{"schemaVersion":1,"type":"authorized_commentary","id":"publisher:work:gen-1-1","reference":{"start":"Gen.1.1","end":"Gen.1.1"},"title":"Section title","content":"Authorized text","source":{"title":"Work title","locator":"p. 10","license":"Contract name"},"rights":{"status":"licensed","evidence":"Contract or approval reference"}}
 ```
 
-The build rejects unsourced claims and never combines competing ranges into one supposedly correct
+## Post-retrieval metadata
+
+`metadata-repository.mjs` always makes topics, commentary, and editorial relations available.
+Original-language records are added for questions about Hebrew, Greek, lemmas, morphology, or
+Strong numbers. Dating claims are added only for dating, composition, redaction, or manuscript
+questions. Callers can override this with `--metadata=all`, an explicit channel list, or
+`--metadata=none`.
+
+`data/rag/curated/dating-claims.jsonl` remains empty until approved scholarly sources are selected.
+A claim must include a scope, date type, range, viewpoint, confidence, and precise source locator.
+Multiple records may cover the same passage; the build never merges them into one allegedly certain
 date.
 
 ## LangChain and LangGraph
 
-Neither package is required for the current deterministic corpus and retrieval pipeline, so neither
-is installed yet.
-
-LangChain becomes useful when a real model provider is connected. The existing hybrid retriever can
-be wrapped as a custom retriever that accepts a string and returns document objects; model switching,
-structured output, prompt templates, and tool schemas can then use its standard interfaces without
-replacing the custom BM25/E5/graph implementation.
-
-LangGraph becomes useful when the answer workflow is stateful or branches by intent. A likely graph
-is:
-
-```text
-classify intent
-  -> retrieve Bible passages
-  -> fetch topic/original/relation/dating channels in parallel
-  -> assemble attributed context
-  -> generate
-  -> verify every citation
-  -> retry retrieval or return
-```
-
-Add LangGraph when the app needs durable conversation state, resumable execution, streaming,
-human review, or citation-verification retries. Until then, ordinary functions are smaller and easier
-to test. LangGraph can be adopted independently of LangChain, so this decision does not lock the
-project into either framework.
-
-Official references:
-
-- <https://docs.langchain.com/oss/javascript/langchain/overview>
-- <https://docs.langchain.com/oss/javascript/integrations/retrievers/index>
-- <https://docs.langchain.com/oss/javascript/langgraph/overview>
-- <https://docs.langchain.com/oss/javascript/langgraph/persistence>
-- <https://docs.langchain.com/oss/javascript/langgraph/workflows-agents>
+Neither package is needed for this deterministic retrieval pipeline. LangChain can later wrap the
+retriever when a model provider is connected and standard document or tool interfaces become useful.
+LangGraph becomes valuable when generation gains durable conversation state, retries, human review,
+or a citation-verification loop. The custom BM25, multi-view retrieval, RRF, and graph expansion can
+remain unchanged beneath either framework.
 
 ## Commands
 
@@ -99,5 +106,8 @@ npm run data:rag-build
 npm run data:rag-metadata
 npm run data:rag-validate
 npm run data:rag-metadata-validate
-npm run rag:query -- --metadata=auto "창세기 1장의 히브리어 원어를 보여줘"
+npm run data:rag-index
+npm run data:rag-index-validate
+npm run rag:evaluate
+npm run rag:query -- --metadata=auto "교회 사람에게 상처받았을 때 읽을 말씀"
 ```

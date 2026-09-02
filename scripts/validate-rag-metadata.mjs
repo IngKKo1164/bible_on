@@ -5,7 +5,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readJsonLines } from './lib/jsonl.mjs';
 import { parseOpenBibleReference, formatCanonicalRange } from './lib/bible-reference.mjs';
-import { validateDatingClaim } from './lib/rag-metadata.mjs';
+import {
+  validateAuthorizedCommentary,
+  validateDatingClaim,
+} from './lib/rag-metadata.mjs';
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, '..');
@@ -151,6 +154,22 @@ async function validate() {
   }
   assertCount(datingIds.size, metadataManifest.files.datingClaims.records, 'Dating claim count');
 
+  const commentaryIds = new Set();
+  for await (const record of readJsonLines(
+    path.join(metadataRoot, metadataManifest.files.commentary.path),
+  )) {
+    validateAuthorizedCommentary(record);
+    assert(!commentaryIds.has(record.id), `${record.id}: duplicate commentary ID`);
+    assert(Array.isArray(record.verseIds) && record.verseIds.length, `${record.id}: no corpus overlap`);
+    record.verseIds.forEach((id) => assert(canonicalIds.has(id), `${record.id}: unknown verse ${id}`));
+    commentaryIds.add(record.id);
+  }
+  assertCount(
+    commentaryIds.size,
+    metadataManifest.files.commentary.records,
+    'Authorized commentary count',
+  );
+
   let crossReferenceCount = 0;
   for await (const edge of readJsonLines(
     path.join(derivedRoot, corpusManifest.files.crossReferences.path),
@@ -170,7 +189,8 @@ async function validate() {
 
   console.log(
     `메타데이터 검증 완료: 주제 연결 ${associationIds.size}개, 원어 ${originalIds.size}절/`
-    + `${originalTokens}토큰, 표제어 ${lemmaIds.size}개, 연대 주장 ${datingIds.size}개.`,
+    + `${originalTokens}토큰, 표제어 ${lemmaIds.size}개, 연대 주장 ${datingIds.size}개, `
+    + `허가 주석 ${commentaryIds.size}개.`,
   );
   console.log(`관주 ${crossReferenceCount}개가 editorial_cross_reference 유형을 가집니다.`);
 }

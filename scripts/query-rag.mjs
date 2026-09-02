@@ -24,7 +24,7 @@ const question = questionParts.join(' ').trim();
 if (!question) {
   console.error(
     'Usage: npm run rag:query -- [--translation=RNKSV] [--limit=5] '
-    + '[--metadata=auto|all|none|topics,originalLanguage,relations,datingClaims] "질문"',
+    + '[--metadata=auto|all|none|topics,commentary,originalLanguage,relations,datingClaims] "질문"',
   );
   process.exitCode = 1;
 } else {
@@ -60,9 +60,24 @@ if (!question) {
         console.log(`${result.rank}. ${passage.reference}${passage.heading ? ` · ${passage.heading}` : ''}`);
         console.log(`   경로: ${result.channels.join(' + ')} | 점수: ${result.score}`);
         console.log(`   ${preview}`);
+        if (result.matchedHypotheses.length) {
+          console.log(
+            `   검색 가설: ${result.matchedHypotheses.map((item) => item.text).join(' / ')}`,
+          );
+        }
+        if (result.matchedTopics.length) {
+          console.log(
+            `   검색 주제: ${result.matchedTopics.map((item) => item.label).join(', ')}`,
+          );
+        }
         if (result.crossReferences.length) {
           const edge = result.crossReferences[0];
-          console.log(`   관주: ${edge.from} → ${edge.toStart}${edge.toEnd === edge.toStart ? '' : `-${edge.toEnd}`} (${edge.votes})`);
+          console.log(`   관주 1-hop: ${edge.from} → ${edge.toStart}${edge.toEnd === edge.toStart ? '' : `-${edge.toEnd}`} (${edge.votes})`);
+        }
+        if (result.matchedCommentary.length) {
+          console.log(
+            `   주석 검색: ${result.matchedCommentary.map((item) => item.title).join(', ')}`,
+          );
         }
         if (result.metadata?.topics.length) {
           console.log(

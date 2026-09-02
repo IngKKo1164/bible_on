@@ -38,6 +38,72 @@ const QUERY_EXPANSIONS = [
   },
 ];
 
+const SEARCH_HYPOTHESIS_RULES = [
+  {
+    id: 'anxiety-peace',
+    pattern: /불안|걱정|염려|근심|두려/u,
+    text: '두려움과 염려 속에서 하나님을 신뢰하고 평안과 위로를 구하는 말씀',
+  },
+  {
+    id: 'guidance-wisdom',
+    pattern: /인도|방향|길을 잃|결정|선택/u,
+    text: '삶의 길과 선택에서 하나님의 인도와 지혜를 구하는 말씀',
+  },
+  {
+    id: 'forgiveness-reconciliation',
+    pattern: /용서|화해|미워|원망/u,
+    text: '상처와 갈등 속에서 서로 용서하고 화해하며 사랑으로 대하는 말씀',
+  },
+  {
+    id: 'betrayal-hurt',
+    pattern: /배신|상처받|신뢰하기 어렵|사람을 못 믿/u,
+    text: '사람에게 배신당하고 상처받았을 때 하나님께 호소하고 신뢰를 회복하는 말씀',
+  },
+  {
+    id: 'grief-comfort',
+    pattern: /슬픔|상실|죽음|떠나보|눈물/u,
+    text: '상실과 슬픔 속에서 애통하며 하나님의 위로와 소망을 구하는 말씀',
+  },
+  {
+    id: 'loneliness-presence',
+    pattern: /외로|혼자인|버림받|고립/u,
+    text: '홀로라고 느낄 때 하나님의 임재와 공동체의 위로를 발견하는 말씀',
+  },
+  {
+    id: 'failure-worth',
+    pattern: /실패|쓸모없|자존감|가치 없/u,
+    text: '실패와 낙심 속에서도 하나님 안에서 인간의 가치와 소명을 발견하는 말씀',
+  },
+  {
+    id: 'guilt-repentance',
+    pattern: /죄책감|죄를 지|회개|부끄러/u,
+    text: '죄를 인정하고 회개하며 하나님의 자비와 용서를 구하는 말씀',
+  },
+];
+
+export function createSearchHypotheses(value, { limit = 4 } = {}) {
+  const original = value.trim();
+  if (!original) return [];
+  const normalized = normalizeSearchText(original);
+  const hypotheses = [{
+    id: 'user-query',
+    kind: 'user_query',
+    text: original,
+    weight: 1,
+  }];
+  for (const rule of SEARCH_HYPOTHESIS_RULES) {
+    if (!rule.pattern.test(normalized)) continue;
+    hypotheses.push({
+      id: rule.id,
+      kind: 'search_hypothesis',
+      text: rule.text,
+      weight: 0.82,
+    });
+    if (hypotheses.length >= limit) break;
+  }
+  return hypotheses;
+}
+
 export function expandQueryForSearch(value) {
   const normalized = normalizeSearchText(value);
   const additions = QUERY_EXPANSIONS
@@ -56,17 +122,7 @@ export function expandQueryForSearch(value) {
 }
 
 export function expandQueryForEmbedding(value) {
-  const additions = [];
-  if (/불안|걱정|염려|근심|두려/u.test(value)) {
-    additions.push('염려하지 말고 두려워하지 말라. 하나님께 맡기고 평안과 위로를 얻는다.');
-  }
-  if (/인도|방향|길/u.test(value)) {
-    additions.push('하나님을 신뢰하면 바른 길로 인도하시고 지혜와 빛을 주신다.');
-  }
-  if (/용서/u.test(value) && /다른|사람|서로|이웃/u.test(value)) {
-    additions.push('서로 용서하고 용납하며 친절과 자비로 대한다.');
-  }
-  return [value.trim(), ...additions].filter(Boolean).join('\n');
+  return createSearchHypotheses(value).map((hypothesis) => hypothesis.text).join('\n');
 }
 
 export function tokenizeForSearch(value) {

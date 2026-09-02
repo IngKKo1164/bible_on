@@ -29,6 +29,9 @@ data/rag/.derived-*/
 data/rag/metadata/
 data/rag/.metadata-*/
 
+# Authorized commentary text is local licensed input. Keep the schema only.
+data/rag/curated/commentary-passages.jsonl
+
 # Locally generated retrieval indexes and downloaded embedding models.
 data/rag/index/
 data/rag/.index-*/

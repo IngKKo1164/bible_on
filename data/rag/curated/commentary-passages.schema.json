@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Authorized commentary passage",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "type",
+    "id",
+    "reference",
+    "title",
+    "content",
+    "source",
+    "rights"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "type": { "const": "authorized_commentary" },
+    "id": { "type": "string", "minLength": 1 },
+    "reference": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "string" },
+        "end": { "type": "string" }
+      }
+    },
+    "title": { "type": "string", "minLength": 1 },
+    "content": { "type": "string", "minLength": 1 },
+    "tradition": { "type": ["string", "null"] },
+    "source": {
+      "type": "object",
+      "required": ["title", "locator", "license"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "author": { "type": ["string", "null"] },
+        "publisher": { "type": ["string", "null"] },
+        "locator": { "type": "string", "minLength": 1 },
+        "license": { "type": "string", "minLength": 1 }
+      }
+    },
+    "rights": {
+      "type": "object",
+      "required": ["status", "evidence"],
+      "properties": {
+        "status": {
+          "enum": ["licensed", "open_license", "public_domain"]
+        },
+        "evidence": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

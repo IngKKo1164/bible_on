@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { createReadStream, createWriteStream } from 'node:fs';
 import {
+  access,
   mkdir,
   readdir,
   readFile,
@@ -21,6 +22,7 @@ import {
   parseOpenBibleTopicScoreLine,
   parseOpenBibleTopicVoteLine,
   parseStepOriginalLine,
+  validateAuthorizedCommentary,
   validateDatingClaim,
 } from './lib/rag-metadata.mjs';
 
@@ -33,6 +35,13 @@ const temporaryRoot = path.join(repositoryRoot, 'data', 'rag', `.metadata-${proc
 const topicRoot = path.join(rawRoot, 'topics', 'openbible');
 const stepBibleRoot = path.join(rawRoot, 'stepbible');
 const datingClaimsPath = path.join(repositoryRoot, 'data', 'rag', 'curated', 'dating-claims.jsonl');
+const commentaryPath = path.join(
+  repositoryRoot,
+  'data',
+  'rag',
+  'curated',
+  'commentary-passages.jsonl',
+);
 
 const STEP_SOURCE = Object.freeze({
   id: 'stepbible-data',
@@ -407,6 +416,39 @@ async function buildDatingClaims({ canonicalIds, outputDirectory }) {
   return { records, files: { datingClaims: outputPath } };
 }
 
+async function buildAuthorizedCommentary({ canonicalIds, outputDirectory }) {
+  const canonicalIdSet = new Set(canonicalIds);
+  const expandRange = createCanonicalRangeExpander(canonicalIds);
+  const outputPath = path.join(outputDirectory, 'commentary-passages.jsonl');
+  const output = createWriteStream(outputPath, { encoding: 'utf8' });
+  const ids = new Set();
+  let records = 0;
+  let inputExists = true;
+  try {
+    await access(commentaryPath);
+  } catch {
+    inputExists = false;
+  }
+
+  try {
+    if (inputExists) {
+      for await (const record of readJsonLines(commentaryPath)) {
+        validateAuthorizedCommentary(record);
+        assert(!ids.has(record.id), `${record.id}: duplicate commentary ID`);
+        ids.add(record.id);
+        const verseIds = expandRange(record.reference.start, record.reference.end)
+          .filter((verseId) => canonicalIdSet.has(verseId));
+        assert(verseIds.length, `${record.id}: commentary does not overlap the Korean Bible corpus`);
+        await writeJsonLine(output, { ...record, verseIds });
+        records += 1;
+      }
+    }
+  } finally {
+    await finishStream(output);
+  }
+  return { records, inputExists, files: { commentary: outputPath } };
+}
+
 async function describeFile(filePath, records) {
   return {
     path: path.basename(filePath),
@@ -425,6 +467,10 @@ async function build() {
     const topics = await buildTopics({ canonicalIds, outputDirectory: temporaryRoot });
     const originalLanguage = await buildOriginalLanguage({ canonicalIds, outputDirectory: temporaryRoot });
     const datingClaims = await buildDatingClaims({ canonicalIds, outputDirectory: temporaryRoot });
+    const commentary = await buildAuthorizedCommentary({
+      canonicalIds,
+      outputDirectory: temporaryRoot,
+    });
 
     const files = {
       topics: await describeFile(topics.files.topics, topics.topics),
@@ -435,14 +481,16 @@ async function build() {
       ),
       lemmaIndex: await describeFile(originalLanguage.files.lemmaIndex, originalLanguage.lemmas),
       datingClaims: await describeFile(datingClaims.files.datingClaims, datingClaims.records),
+      commentary: await describeFile(commentary.files.commentary, commentary.records),
     };
     const manifest = {
       schemaVersion: 1,
       generatedAtUtc: new Date().toISOString(),
       architecture: {
         joinKey: 'canonical OSIS verse ID',
-        passageMetadataPolicy: 'linked_not_embedded',
-        queryPolicy: 'load_only_requested_channels',
+        metadataPolicy: 'linked_not_concatenated_with_bible_text',
+        retrievalChannels: ['topics', 'commentary'],
+        postRetrievalPolicy: 'load_only_requested_channels',
       },
       corpus: {
         manifest: 'data/rag/derived/manifest.json',
@@ -454,6 +502,11 @@ async function build() {
         openBibleTopicHeaders: topics.headers,
         stepBibleFiles: originalLanguage.sourceFiles,
         datingClaims: 'data/rag/curated/dating-claims.jsonl',
+        commentary: {
+          path: 'data/rag/curated/commentary-passages.jsonl',
+          present: commentary.inputExists,
+          schema: 'data/rag/curated/commentary-passages.schema.json',
+        },
       },
       topics: {
         definitions: topics.topics,
@@ -491,6 +544,10 @@ async function build() {
         records: datingClaims.records,
         policy: 'multiple_sourced_claims_no_synthetic_consensus',
       },
+      commentary: {
+        records: commentary.records,
+        policy: 'verified_rights_and_source_required',
+      },
       files,
     };
     await writeFile(
@@ -507,6 +564,7 @@ async function build() {
       + `공유 표제어 ${originalLanguage.lemmas}개를 생성했습니다.`,
     );
     console.log(`근거가 등록된 연대 주장 ${datingClaims.records}개를 생성했습니다.`);
+    console.log(`사용 권한이 확인된 주석·해설 ${commentary.records}개를 생성했습니다.`);
     console.log(`RAG 연결 메타데이터를 생성했습니다: ${outputRoot}`);
   } catch (error) {
     await rm(temporaryRoot, { recursive: true, force: true });

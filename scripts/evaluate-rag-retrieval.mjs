@@ -31,6 +31,7 @@ const cases = [
     expected: [
       'Prov.3.5', 'Prov.3.6', 'Ps.119.105', 'Ps.143.8', 'Ps.143.10',
       'Gal.5.16', 'Isa.30.21', 'Ps.107.7', 'Ps.23.2', 'Ps.23.3',
+      'Ps.25.4', 'Ps.25.5',
     ],
   },
   {
@@ -78,6 +79,16 @@ try {
         assert.equal(result.passage.translation.id, translationId, 'translation leakage');
         assert(result.passage.verseIds.length > 0, 'missing canonical verse IDs');
         assert(result.passage.source?.url, 'missing source URL');
+        assert(
+          result.crossReferences.every((edge) => (
+            edge.expansionDepth === 1 && edge.relationType === 'editorial_cross_reference'
+          )),
+          'cross-reference expansion must remain one hop and preserve its relation type',
+        );
+        assert(
+          result.matchedTopics.every((topic) => topic.id && topic.associationId),
+          'topic retrieval must preserve topic and association provenance',
+        );
       });
       const firstRelevantRank = results.findIndex((result) => (
         result.passage.verseIds.some((verseId) => evaluationCase.expected.includes(verseId))

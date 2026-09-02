@@ -7,6 +7,7 @@ import {
 
 export const METADATA_CHANNELS = Object.freeze([
   'topics',
+  'commentary',
   'originalLanguage',
   'relations',
   'datingClaims',
@@ -206,7 +207,7 @@ export function createCanonicalRangeExpander(canonicalIds) {
 
 export function selectMetadataChannels(question) {
   const normalized = question.normalize('NFKC').toLocaleLowerCase('ko-KR');
-  const channels = new Set(['topics', 'relations']);
+  const channels = new Set(['topics', 'commentary', 'relations']);
   if (/(원어|히브리어|헬라어|그리스어|스트롱|strong|어근|형태소|문법)/u.test(normalized)) {
     channels.add('originalLanguage');
   }
@@ -240,4 +241,33 @@ export function validateDatingClaim(claim) {
     throw new Error(`${claim.id}: a source title and locator are required`);
   }
   return claim;
+}
+
+export function validateAuthorizedCommentary(record) {
+  const allowedRights = new Set(['licensed', 'open_license', 'public_domain']);
+  if (record.schemaVersion !== 1 || record.type !== 'authorized_commentary' || !record.id) {
+    throw new Error('Commentary requires schemaVersion 1, type authorized_commentary, and an ID.');
+  }
+  if (!record.reference?.start || !record.reference?.end) {
+    throw new Error(`${record.id}: commentary reference range is required`);
+  }
+  parseOpenBibleReference(
+    record.reference.start === record.reference.end
+      ? record.reference.start
+      : `${record.reference.start}-${record.reference.end}`,
+  );
+  if (!record.title?.trim() || !record.content?.trim()) {
+    throw new Error(`${record.id}: commentary title and content are required`);
+  }
+  if (
+    !record.source?.title?.trim()
+    || !record.source?.locator?.trim()
+    || !record.source?.license?.trim()
+  ) {
+    throw new Error(`${record.id}: commentary source title, locator, and license are required`);
+  }
+  if (!allowedRights.has(record.rights?.status) || !record.rights?.evidence?.trim()) {
+    throw new Error(`${record.id}: verified commentary rights and evidence are required`);
+  }
+  return record;
 }
