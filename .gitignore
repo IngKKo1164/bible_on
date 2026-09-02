@@ -22,3 +22,8 @@ pnpm-debug.log*
 # Reproducible RAG source downloads (see scripts/download-rag-data.ps1)
 data/rag/raw/*
 !data/rag/raw/.gitkeep
+
+# Licensed Korean Bible text generated from the approved KBS source.
+# Keep the corpus out of Git unless the written license explicitly allows
+# source-repository redistribution. The downloader recreates these files.
+public/data/bible/**/*.json

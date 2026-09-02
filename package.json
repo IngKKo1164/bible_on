@@ -7,6 +7,8 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "data:download": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/download-rag-data.ps1",
+    "data:kbs-bible": "node scripts/download-kbs-bible.mjs",
+    "data:validate": "node scripts/validate-bible-data.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
@@ -17,5 +19,8 @@
     "react-icons": "^5.4.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
+  },
+  "devDependencies": {
+    "cheerio": "^1.1.2"
   }
 }
