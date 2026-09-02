@@ -92,11 +92,13 @@ date.
 
 ## LangChain and LangGraph
 
-Neither package is needed for this deterministic retrieval pipeline. LangChain can later wrap the
-retriever when a model provider is connected and standard document or tool interfaces become useful.
-LangGraph becomes valuable when generation gains durable conversation state, retries, human review,
-or a citation-verification loop. The custom BM25, multi-view retrieval, RRF, and graph expansion can
-remain unchanged beneath either framework.
+LangGraph now orchestrates the server-side conversational workflow described in
+`docs/RAG_CONVERSATION_GRAPH.md`. It owns adaptive retrieval decisions, durable conversation state,
+clarification interrupts, and retry boundaries. The custom BM25, multi-view retrieval, weighted RRF,
+and one-hop graph expansion remain framework-independent beneath it.
+
+LangChain is still unnecessary for the retrieval implementation itself. A future model adapter may
+use it if provider portability or standard tool interfaces provide concrete value.
 
 ## Commands
 

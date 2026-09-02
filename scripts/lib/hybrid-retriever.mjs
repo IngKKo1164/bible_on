@@ -20,6 +20,7 @@ const CHANNEL_WEIGHTS = {
   heading_scene: 0.72,
   topic: 0.9,
   commentary: 0.82,
+  conversation_anchor: 0.35,
   cross_reference: 0.5,
 };
 
@@ -38,12 +39,14 @@ function createScoreBreakdown() {
     headingScene: 0,
     topic: 0,
     commentary: 0,
+    conversationAnchor: 0,
     crossReference: 0,
   };
 }
 
 function scoreKey(channel) {
   if (channel === 'heading_scene') return 'headingScene';
+  if (channel === 'conversation_anchor') return 'conversationAnchor';
   if (channel === 'cross_reference') return 'crossReference';
   return channel;
 }
@@ -90,6 +93,18 @@ function dotProduct(query, vectors, offset, dimensions) {
     score += query[index] * vectors[offset + index];
   }
   return score;
+}
+
+function normalizeHypotheses(query, supplied) {
+  const candidates = supplied?.length ? supplied : createSearchHypotheses(query);
+  const seen = new Set();
+  return candidates.filter((hypothesis) => {
+    if (!hypothesis?.text?.trim() || !Number.isFinite(hypothesis.weight)) return false;
+    const key = hypothesis.text.trim().toLocaleLowerCase('ko-KR');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return hypothesis.weight > 0 && hypothesis.weight <= 1;
+  });
 }
 
 function topVectorRecords({
@@ -279,8 +294,10 @@ export async function createHybridRetriever({ repositoryRoot, localFilesOnly = t
     commentaryLimit = 40,
     graphSeedLimit = 8,
     graphEdgesPerVerse = 3,
+    searchHypotheses,
+    anchorPassageIds = [],
   } = {}) {
-    const hypotheses = createSearchHypotheses(query);
+    const hypotheses = normalizeHypotheses(query, searchHypotheses);
     if (!hypotheses.length) return [];
     const candidates = new Map();
     const lexicalQuery = expandQueryForSearch(query);
@@ -388,10 +405,28 @@ export async function createHybridRetriever({ repositoryRoot, localFilesOnly = t
       }
     }
 
+    const anchors = [...new Set(anchorPassageIds)]
+      .map((passageId) => passagesById.get(passageId))
+      .filter((passage) => passage?.translation.id === translationId);
+    anchors.forEach((passage, index) => {
+      const candidate = addCandidate(candidates, passage.id);
+      addRrfScore(
+        candidate,
+        'conversation_anchor',
+        index + 1,
+        CHANNEL_WEIGHTS.conversation_anchor,
+      );
+      passage.verseIds.forEach((verseId) => candidate.seedVerseIds.add(verseId));
+    });
+
     // Candidates introduced by an edge never become seeds, keeping expansion at exactly one hop.
-    const graphSeeds = [...candidates.values()]
-      .sort((left, right) => right.score - left.score)
-      .slice(0, graphSeedLimit);
+    const anchorIds = new Set(anchors.map((passage) => passage.id));
+    const graphSeeds = [
+      ...anchors.map((passage) => candidates.get(passage.id)),
+      ...[...candidates.values()]
+        .filter((candidate) => !anchorIds.has(candidate.passageId))
+        .sort((left, right) => right.score - left.score),
+    ].slice(0, graphSeedLimit);
     const graphMatches = new Map();
     graphSeeds.forEach((seed, seedIndex) => {
       const seedPassage = passagesById.get(seed.passageId);
@@ -471,6 +506,16 @@ export async function createHybridRetriever({ repositoryRoot, localFilesOnly = t
   return {
     manifest: indexManifest,
     search,
+    getPassageById(passageId) {
+      return passagesById.get(passageId) ?? null;
+    },
+    getPassagesByIds(passageIds, { translationId } = {}) {
+      return [...new Set(passageIds)]
+        .map((passageId) => passagesById.get(passageId))
+        .filter((passage) => passage && (
+          !translationId || passage.translation.id === translationId
+        ));
+    },
     async dispose() {
       await embedder.dispose();
     },

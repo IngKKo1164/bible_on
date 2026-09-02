@@ -15,19 +15,24 @@
     "data:rag-metadata-validate": "node scripts/validate-rag-metadata.mjs",
     "data:rag-index": "node scripts/build-rag-search-index.mjs",
     "data:rag-index-validate": "node scripts/validate-rag-search-index.mjs",
+    "db:langgraph-setup": "node scripts/setup-langgraph-postgres.mjs",
     "rag:query": "node scripts/query-rag.mjs",
     "rag:evaluate": "node scripts/evaluate-rag-retrieval.mjs",
-    "test:rag": "node --test scripts/tests/rag-corpus.test.mjs scripts/tests/rag-metadata.test.mjs scripts/tests/search-text.test.mjs",
+    "test:rag": "node --test scripts/tests/rag-corpus.test.mjs scripts/tests/rag-metadata.test.mjs scripts/tests/search-text.test.mjs scripts/tests/bible-chat-graph.test.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "@langchain/langgraph": "^1.4.13",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.5",
     "@vitejs/plugin-react": "^4.3.4",
     "lucide-react": "^0.468.0",
+    "pg": "^8.23.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-icons": "^5.4.0",
     "typescript": "^5.7.2",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "zod": "^4.2.0"
   },
   "devDependencies": {
     "@huggingface/transformers": "^3.8.1",
