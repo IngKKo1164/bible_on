@@ -27,7 +27,6 @@ import {
   Send,
   Settings,
   ShieldCheck,
-  Sparkles,
   Star,
   ThumbsUp,
   Trash2,
@@ -89,7 +88,7 @@ const defaultRecentPassages = Object.entries(readingHighlights)
   .reverse();
 
 const translations = [
-  { id: 'GAE', label: '개역개정' },
+  { id: 'KRV', label: '개역개정' },
   { id: 'RNKSV', label: '새번역' },
 ];
 
@@ -232,7 +231,7 @@ const initialChurchConversations = [
     lastMessage: '새가족 모임 자료를 공유했어요.',
     messages: [
       { id: 'j1', from: 'them', text: '이번 주 새가족 모임 자료를 공유했어요.', time: '어제 오후 8:14' },
-      { id: 'j2', from: 'me', text: '확인해 볼게요. 감사합니다.', time: '어제 오후 8:20' },
+      { id: 'j2', from: 'me', text: '확인해 볼게요. 감사합니다.', time: '어제 오후 8:20', unreadByCount: 1 },
     ],
   },
   {
@@ -471,7 +470,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [selectedBookId, setSelectedBookId] = useState('philippians');
   const [selectedChapter, setSelectedChapter] = useState(4);
-  const [selectedTranslation, setSelectedTranslation] = useState('GAE');
+  const [selectedTranslation, setSelectedTranslation] = useState('KRV');
   const [selectedRef, setSelectedRef] = useState('빌립보서 4:6');
   const [favoriteRefs] = useState(['시편 23:1']);
   const [readVerseIds, setReadVerseIds] = useState([
@@ -522,7 +521,7 @@ function App() {
       const startedAt = Date.now();
 
       try {
-        await preloadBible(['GAE', 'RNKSV'], (completed, total) => {
+        await preloadBible(['KRV', 'RNKSV'], (completed, total) => {
           if (active) setLoadingProgress(Math.round((completed / total) * 100));
         });
         const remainingMinimumTime = Math.max(0, 700 - (Date.now() - startedAt));
@@ -728,7 +727,6 @@ function App() {
           <HomeView
             selectedBook={selectedBook}
             selectedChapter={selectedChapter}
-            readCount={readVerseIds.length}
             query={query}
             setQuery={setQuery}
             selectBiblePassage={selectBiblePassage}
@@ -1149,7 +1147,6 @@ function BottomNav({ activeTab, onSelectTab }) {
 function HomeView({
   selectedBook,
   selectedChapter,
-  readCount,
   query,
   setQuery,
   selectBiblePassage,
@@ -1357,23 +1354,6 @@ function HomeView({
                 </div>
                 <ChevronRight size={19} aria-hidden="true" />
               </section>
-
-              <Section title="오늘 할 일">
-                <ListSurface>
-                  <ListRow
-                    icon={PenLine}
-                    title="오늘의 QT 남기기"
-                    description={`${churchInfo.department}에 묵상을 나눠보세요`}
-                    action="쓰기"
-                  />
-                  <ListRow
-                    icon={Sparkles}
-                    title="말씀 로드맵 확인"
-                    description={`이번 주 5일 중 1일 완료 · ${readCount}절 읽음`}
-                    action="보기"
-                  />
-                </ListSurface>
-              </Section>
 
               <HomeRecommendations
                 query={query}
@@ -2146,7 +2126,6 @@ function BibleView({
           <div>
             <span>{selectedTranslation} · {translations.find((item) => item.id === selectedTranslation)?.label}</span>
             <h2>{selectedBook.name} {selectedChapter}장</h2>
-            <p>대한성서공회 사용 허가 본문</p>
           </div>
           <div className="reader-header-side">
             <button className="icon-button small" type="button" aria-label="본문 메뉴" title="본문 메뉴">
@@ -2280,7 +2259,7 @@ function BibleView({
         </footer>
         <div className="source-note">
           <span>
-            {selectedTranslation === 'GAE'
+            {selectedTranslation === 'KRV'
               ? '성경전서 개역개정판 · 대한성서공회 사용 허가'
               : '성경전서 새번역 · 대한성서공회 사용 허가'}
           </span>
@@ -2493,24 +2472,33 @@ function HomeRecommendations({ query, setQuery, selectBiblePassage, favoriteRefs
 function MessageView({ conversations, setConversations }) {
   const [directoryMode, setDirectoryMode] = useState('recent');
   const [openConversationId, setOpenConversationId] = useState('');
-  const [memberQuery, setMemberQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedMemberProfile, setSelectedMemberProfile] = useState(null);
   const [groupBuilderOpen, setGroupBuilderOpen] = useState(false);
   const [draftConversation, setDraftConversation] = useState(null);
   const storedOpenConversation = conversations.find(({ id }) => id === openConversationId);
   const openConversation = storedOpenConversation
     ?? (draftConversation?.id === openConversationId ? draftConversation : null);
-  const normalizedQuery = memberQuery.trim().toLowerCase();
+  const normalizedQuery = searchQuery.trim().toLowerCase();
   const filteredConversations = conversations.filter((conversation) => (
     [
       conversation.name,
       conversation.department,
       conversation.role,
+      conversation.lastMessage,
       ...getConversationParticipants(getConversationParticipantIds(conversation)).map(({ name }) => name),
+      ...conversation.messages.map(({ text }) => text),
     ]
       .filter(Boolean)
       .some((value) => value.toLowerCase().includes(normalizedQuery))
   ));
+  const getConversationPreview = (conversation) => {
+    if (!normalizedQuery) return conversation.lastMessage;
+    const matchingMessage = [...conversation.messages]
+      .reverse()
+      .find(({ text }) => text.toLowerCase().includes(normalizedQuery));
+    return matchingMessage?.text ?? conversation.lastMessage;
+  };
   const recentConversationIds = new Set(conversations.flatMap(getConversationParticipantIds));
   const filteredDirectoryMembers = churchDirectoryMembers.filter((member) => (
     !recentConversationIds.has(member.id)
@@ -2586,47 +2574,54 @@ function MessageView({ conversations, setConversations }) {
   return (
     <div className="message-layout">
       <section className="message-directory" aria-label="교회 메시지">
-        <div className="message-view-switch" role="tablist" aria-label="메시지 목록 구분">
+        <div className="message-directory-toolbar">
+          <div className="message-view-switch" role="tablist" aria-label="메시지 목록 구분">
+            <button
+              className={directoryMode === 'members' ? 'is-active' : ''}
+              type="button"
+              role="tab"
+              aria-selected={directoryMode === 'members'}
+              onClick={() => setDirectoryMode('members')}
+            >
+              구성원
+            </button>
+            <button
+              className={directoryMode === 'recent' ? 'is-active' : ''}
+              type="button"
+              role="tab"
+              aria-selected={directoryMode === 'recent'}
+              onClick={() => setDirectoryMode('recent')}
+            >
+              최근 대화
+            </button>
+          </div>
           <button
-            className={directoryMode === 'members' ? 'is-active' : ''}
+            className="message-group-create-icon"
             type="button"
-            role="tab"
-            aria-selected={directoryMode === 'members'}
-            onClick={() => setDirectoryMode('members')}
+            aria-label="단체 채팅 만들기"
+            title="단체 채팅 만들기"
+            onClick={() => setGroupBuilderOpen(true)}
           >
-            구성원
-          </button>
-          <button
-            className={directoryMode === 'recent' ? 'is-active' : ''}
-            type="button"
-            role="tab"
-            aria-selected={directoryMode === 'recent'}
-            onClick={() => setDirectoryMode('recent')}
-          >
-            최근 대화
+            <span aria-hidden="true">
+              <Users size={22} />
+              <Plus className="message-group-plus" size={12} strokeWidth={3} />
+            </span>
           </button>
         </div>
         <label className="message-search">
           <Search size={18} aria-hidden="true" />
           <input
-            aria-label="이름 또는 부서 검색"
-            value={memberQuery}
-            onChange={(event) => setMemberQuery(event.target.value)}
-            placeholder="이름 또는 부서 검색"
+            aria-label={directoryMode === 'recent' ? '최근 대화 검색' : '구성원 검색'}
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder={directoryMode === 'recent' ? '최근 대화 검색' : '구성원 검색'}
           />
-          {memberQuery && (
-            <button type="button" aria-label="검색어 지우기" onClick={() => setMemberQuery('')}>
+          {searchQuery && (
+            <button type="button" aria-label="검색어 지우기" onClick={() => setSearchQuery('')}>
               <X size={16} aria-hidden="true" />
             </button>
           )}
         </label>
-        {directoryMode === 'members' && (
-          <button className="message-group-create" type="button" onClick={() => setGroupBuilderOpen(true)}>
-            <span><Users size={20} aria-hidden="true" /></span>
-            <span><strong>단체 채팅 만들기</strong><small>여러 구성원을 선택해 대화를 시작해요</small></span>
-            <ChevronRight size={18} aria-hidden="true" />
-          </button>
-        )}
         {directoryMode === 'recent' ? (
           <div className="conversation-list">
             {filteredConversations.map((conversation) => (
@@ -2643,7 +2638,7 @@ function MessageView({ conversations, setConversations }) {
                 </span>
                 <span className="conversation-copy">
                   <span><strong>{conversation.name}</strong><small>{conversation.department} · {conversation.role}</small></span>
-                  <p>{conversation.lastMessage}</p>
+                  <p><HighlightedMessage text={getConversationPreview(conversation)} query={normalizedQuery} /></p>
                 </span>
                 <span className="conversation-meta">
                   <time>{conversation.time}</time>
@@ -2651,7 +2646,9 @@ function MessageView({ conversations, setConversations }) {
                 </span>
               </button>
             ))}
-            {filteredConversations.length === 0 && <p className="message-empty">최근 대화가 없어요.</p>}
+            {filteredConversations.length === 0 && (
+              <p className="message-empty">{normalizedQuery ? '일치하는 최근 대화가 없어요.' : '최근 대화가 없어요.'}</p>
+            )}
           </div>
         ) : (
           <div className="member-directory-list">
@@ -2792,10 +2789,10 @@ function MemberSelectionSheet({
           <label className="member-picker-search">
             <Search size={18} aria-hidden="true" />
             <input
-              aria-label="초대할 구성원 검색"
+              aria-label="구성원 검색"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="이름 또는 부서 검색"
+              placeholder="구성원 검색"
             />
             {query && <button type="button" aria-label="검색어 지우기" onClick={() => setQuery('')}><X size={16} /></button>}
           </label>
@@ -2885,7 +2882,13 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
       time: '방금',
       messages: [
         ...current.messages,
-        { id: `${current.id}-${Date.now()}`, from: 'me', text, time: '방금' },
+        {
+          id: `${current.id}-${Date.now()}`,
+          from: 'me',
+          text,
+          time: '방금',
+          unreadByCount: getConversationParticipantIds(current).length,
+        },
       ],
     });
     if (conversation.isDraft) onPersistDraft(appendMessage(conversation));
@@ -2990,7 +2993,14 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
           ) : (
             <div className={`message-bubble-row ${message.from === 'me' ? 'is-me' : 'is-them'}`} key={message.id}>
               <p><HighlightedMessage text={message.text} query={normalizedMessageQuery} /></p>
-              <time>{message.time}</time>
+              <span className="message-bubble-meta">
+                {message.unreadByCount > 0 && (
+                  <b aria-label={`대화 참여자 ${message.unreadByCount}명이 읽지 않음`}>
+                    {message.unreadByCount}
+                  </b>
+                )}
+                <time>{message.time}</time>
+              </span>
             </div>
           )
         ))}

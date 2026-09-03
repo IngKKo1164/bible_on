@@ -68,25 +68,25 @@ export const bibleCatalog = [
 ];
 
 const translationSources = {
-  GAE: 'gae',
-  RNKSV: 'rnksv',
+  KRV: { directory: 'gae', sourceId: 'GAE' },
+  RNKSV: { directory: 'rnksv', sourceId: 'RNKSV' },
 };
 
 const bookCache = new Map();
 
 async function loadBibleBook(translationId, book) {
-  const translationDirectory = translationSources[translationId];
-  if (!translationDirectory) throw new Error(`Unknown Bible translation: ${translationId}`);
+  const translationSource = translationSources[translationId];
+  if (!translationSource) throw new Error(`Unknown Bible translation: ${translationId}`);
 
   const cacheKey = `${translationId}:${book.file}`;
   let data = bookCache.get(cacheKey);
   if (data) return data;
 
   const baseUrl = import.meta.env.BASE_URL ?? '/';
-  const response = await fetch(`${baseUrl}data/bible/${translationDirectory}/${book.file}.json`);
+  const response = await fetch(`${baseUrl}data/bible/${translationSource.directory}/${book.file}.json`);
   if (!response.ok) throw new Error(`Failed to load ${translationId} ${book.name}`);
   data = await response.json();
-  if (data.translation?.id !== translationId || data.book?.id !== book.id) {
+  if (data.translation?.id !== translationSource.sourceId || data.book?.id !== book.id) {
     throw new Error(`Invalid Bible data: ${translationId} ${book.name}`);
   }
   bookCache.set(cacheKey, data);

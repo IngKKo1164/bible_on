@@ -65,7 +65,7 @@ export async function retrieveBibleSearchAnswer(question) {
 
   const citations = await Promise.all(topic.passages.map(async (passage) => {
     const book = bibleCatalog.find(({ id }) => id === passage.bookId);
-    const chapterVerses = await loadBibleChapter('GAE', passage.bookId, passage.chapter);
+    const chapterVerses = await loadBibleChapter('KRV', passage.bookId, passage.chapter);
     const matchedVerses = chapterVerses.filter(({ verse }) => passage.verses.includes(verse));
     const verseLabel = passage.verses.length > 1
       ? `${passage.verses[0]}-${passage.verses.at(-1)}`
