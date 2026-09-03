@@ -7,12 +7,14 @@
   --app-bg-deep: #dcd6e9;
   --app-bg-gradient: radial-gradient(
     ellipse at center,
-    var(--app-bg-deep) 0%,
-    #e0daeb 22%,
-    #e6e1ef 44%,
-    #ece8f3 66%,
-    #f1eef7 84%,
-    var(--app-bg) 100%
+    rgb(220 214 233 / 100%) 0%,
+    rgb(220 214 233 / 76%) 24%,
+    rgb(220 214 233 / 48%) 48%,
+    rgb(220 214 233 / 24%) 66%,
+    rgb(220 214 233 / 8%) 80%,
+    rgb(220 214 233 / 2%) 88%,
+    transparent 94%,
+    transparent 100%
   );
   --surface: #ffffff;
   --surface-muted: #f7f8fa;
@@ -133,7 +135,7 @@ button:disabled {
   transition: none;
 }
 
-.home-search-orbit {
+.home-search-emphasis {
   height: calc(100% + 2px);
   inset: -1px;
   margin: 0;
@@ -145,49 +147,74 @@ button:disabled {
   z-index: 3;
 }
 
-.home-search-orbit-line {
+.home-search-emphasis-line {
   fill: none;
   height: calc(100% - 2px);
   rx: 27px;
   stroke: var(--accent-deep);
-  stroke-dasharray: var(--home-search-orbit-dasharray, 14 86);
+  opacity: 0;
+  stroke-dasharray: var(--home-search-emphasis-dasharray, 14 86);
   stroke-dashoffset: 0;
   stroke-linecap: round;
-  stroke-width: 2.5px;
+  stroke-width: 0.4px;
   vector-effect: non-scaling-stroke;
   width: calc(100% - 2px);
   x: 1px;
   y: 1px;
 }
 
-.app-shell.is-home-search-orbiting .home-search-orbit {
+.app-shell.is-home-search-emphasizing .home-search-emphasis {
   opacity: 1;
 }
 
-.app-shell.is-home-search-orbiting .home-search-orbit-line {
-  animation: home-search-orbit 500ms both;
+.app-shell.is-home-search-emphasizing .home-search-emphasis-line {
+  animation:
+    home-search-emphasis-orbit 700ms both,
+    home-search-emphasis-thickness 700ms ease-in-out both;
   animation-timing-function: linear(
     0,
-    0.279 10%,
-    0.447 20%,
-    0.568 30%,
-    0.663 40%,
-    0.74 50%,
-    0.806 60%,
-    0.863 70%,
-    0.914 80%,
-    0.959 90%,
+    0.38 10%,
+    0.63 20%,
+    0.75 30%,
+    0.83 40%,
+    0.89 50%,
+    0.935 60%,
+    0.966 70%,
+    0.986 80%,
+    0.997 90%,
     1
-  );
+  ), ease-in-out;
 }
 
-@keyframes home-search-orbit {
+@keyframes home-search-emphasis-orbit {
   from {
     stroke-dashoffset: 0;
   }
 
   to {
     stroke-dashoffset: -100;
+  }
+}
+
+@keyframes home-search-emphasis-thickness {
+  0% {
+    opacity: 0;
+    stroke-width: 0.4px;
+  }
+
+  12% {
+    opacity: 1;
+    stroke-width: 3.4px;
+  }
+
+  72% {
+    opacity: 1;
+    stroke-width: 3.4px;
+  }
+
+  100% {
+    opacity: 0;
+    stroke-width: 0.4px;
   }
 }
 
@@ -1011,7 +1038,7 @@ button:disabled {
   box-shadow: 0 0 0 3px rgb(75 66 152 / 11%), 0 5px 18px rgb(25 31 40 / 8%);
 }
 
-.home-rag-search > svg:not(.home-search-orbit) {
+.home-rag-search > svg:not(.home-search-emphasis) {
   align-self: end;
   color: var(--accent-deep);
   margin-bottom: 10px;
