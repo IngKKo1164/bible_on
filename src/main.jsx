@@ -144,10 +144,40 @@ const hymns = [
 
 const defaultPersonalProfile = {
   name: '김온유',
+  nickname: '온유빛',
   avatarImage: '',
   verseRef: '빌립보서 4:13',
   representativeVerse: '내게 능력 주시는 자 안에서 내가 모든 것을 할 수 있느니라.',
 };
+
+const unavailableNicknames = new Set(['말씀지기', '은혜샘', '바이블온', 'grace24']);
+
+function getNicknameLengthUnits(nickname) {
+  return Array.from(nickname).reduce((total, character) => (
+    total + (/^[가-힣]$/.test(character) ? 2 : 1)
+  ), 0);
+}
+
+function validateNickname(nickname, currentNickname = '') {
+  const normalized = nickname.trim().normalize('NFKC');
+  if (!normalized) return { normalized, state: 'empty', message: '닉네임을 입력해 주세요.' };
+  if (!/^[가-힣A-Za-z0-9]+$/.test(normalized)) {
+    return { normalized, state: 'invalid', message: '한글, 영문, 숫자만 사용할 수 있어요.' };
+  }
+  if (/^[0-9]+$/.test(normalized)) {
+    return { normalized, state: 'invalid', message: '숫자로만 구성할 수 없어요.' };
+  }
+  const lengthUnits = getNicknameLengthUnits(normalized);
+  if (lengthUnits < 4 || lengthUnits > 16) {
+    return { normalized, state: 'invalid', message: '한글 2~8자 또는 영문·숫자 4~16자로 입력해 주세요.' };
+  }
+  const duplicateKey = normalized.toLocaleLowerCase('ko-KR');
+  const currentKey = currentNickname.trim().normalize('NFKC').toLocaleLowerCase('ko-KR');
+  if (duplicateKey !== currentKey && unavailableNicknames.has(duplicateKey)) {
+    return { normalized, state: 'duplicate', message: '이미 사용 중인 닉네임이에요.' };
+  }
+  return { normalized, state: 'available', message: '사용 가능한 닉네임이에요.' };
+}
 
 const initialRecentNotifications = [
   {
@@ -453,7 +483,96 @@ function formatHomeChatTime(timestamp) {
   return date.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
 }
 
+function useHeavyOverscroll(rootRef) {
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return undefined;
+    const releaseTimers = new WeakMap();
+    let touchGesture = null;
+
+    const findScrollable = (start) => {
+      let current = start instanceof Element ? start : start?.parentElement;
+      while (current && current !== root) {
+        const { overflowY } = window.getComputedStyle(current);
+        if (/(auto|scroll)/.test(overflowY) && current.scrollHeight > current.clientHeight + 1) return current;
+        current = current.parentElement;
+      }
+      return null;
+    };
+
+    const release = (target, delay = 0) => {
+      if (!target) return;
+      window.clearTimeout(releaseTimers.get(target));
+      const timerId = window.setTimeout(() => {
+        target.classList.add('is-heavy-overscroll-releasing');
+        target.style.setProperty('--heavy-overscroll-shift', '0px');
+        const cleanupId = window.setTimeout(() => {
+          target.classList.remove('is-heavy-overscrolling', 'is-heavy-overscroll-releasing');
+          target.style.removeProperty('--heavy-overscroll-shift');
+        }, 280);
+        releaseTimers.set(target, cleanupId);
+      }, delay);
+      releaseTimers.set(target, timerId);
+    };
+
+    const stretch = (target, distance, direction) => {
+      const dampedDistance = Math.min(18, Math.sqrt(Math.abs(distance)) * 2.15);
+      target.classList.remove('is-heavy-overscroll-releasing');
+      target.classList.add('is-heavy-overscrolling');
+      target.style.setProperty('--heavy-overscroll-shift', `${dampedDistance * direction}px`);
+    };
+
+    const onTouchStart = (event) => {
+      const touch = event.touches[0];
+      const target = findScrollable(event.target);
+      if (!touch || !target) return;
+      touchGesture = { target, startY: touch.clientY };
+    };
+
+    const onTouchMove = (event) => {
+      if (!touchGesture) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      const deltaY = touch.clientY - touchGesture.startY;
+      const { target } = touchGesture;
+      const atTop = target.scrollTop <= 0;
+      const atBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 1;
+      if ((atTop && deltaY > 0) || (atBottom && deltaY < 0)) stretch(target, deltaY, deltaY > 0 ? 1 : -1);
+      else release(target);
+    };
+
+    const onTouchEnd = () => {
+      release(touchGesture?.target);
+      touchGesture = null;
+    };
+
+    const onWheel = (event) => {
+      const target = findScrollable(event.target);
+      if (!target) return;
+      const atTop = target.scrollTop <= 0 && event.deltaY < 0;
+      const atBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 1 && event.deltaY > 0;
+      if (!atTop && !atBottom) return;
+      stretch(target, Math.min(Math.abs(event.deltaY), 24), atTop ? 1 : -1);
+      release(target, 70);
+    };
+
+    root.addEventListener('touchstart', onTouchStart, { passive: true, capture: true });
+    root.addEventListener('touchmove', onTouchMove, { passive: true, capture: true });
+    root.addEventListener('touchend', onTouchEnd, { passive: true, capture: true });
+    root.addEventListener('touchcancel', onTouchEnd, { passive: true, capture: true });
+    root.addEventListener('wheel', onWheel, { passive: true, capture: true });
+    return () => {
+      root.removeEventListener('touchstart', onTouchStart, { capture: true });
+      root.removeEventListener('touchmove', onTouchMove, { capture: true });
+      root.removeEventListener('touchend', onTouchEnd, { capture: true });
+      root.removeEventListener('touchcancel', onTouchEnd, { capture: true });
+      root.removeEventListener('wheel', onWheel, { capture: true });
+    };
+  }, [rootRef]);
+}
+
 function App() {
+  const appShellRef = useRef(null);
   const workspaceRef = useRef(null);
   const initialHomeChatRoomsRef = useRef(null);
   if (initialHomeChatRoomsRef.current === null) {
@@ -509,6 +628,7 @@ function App() {
     room.id === activeHomeChatId && !room.deletedAt
   ));
   const homeRagMessages = activeHomeChat?.messages ?? [];
+  useHeavyOverscroll(appShellRef);
 
   useEffect(() => {
     let active = true;
@@ -546,8 +666,8 @@ function App() {
     const returnTimerId = window.setTimeout(() => {
       setIsHomeIntro(false);
       setIsHomeReturning(true);
-    }, 2000);
-    const settleTimerId = window.setTimeout(() => setIsHomeReturning(false), 3000);
+    }, 1800);
+    const settleTimerId = window.setTimeout(() => setIsHomeReturning(false), 2800);
 
     return () => {
       window.clearTimeout(returnTimerId);
@@ -695,6 +815,7 @@ function App() {
 
   return (
     <main
+      ref={appShellRef}
       className={`app-shell ${activeTab === 'home' ? 'is-home-active' : ''} ${showHomeIntro ? 'is-home-intro' : ''} ${!isHomeGradientVisible ? 'is-home-gradient-hidden' : ''} ${isHomeReturning ? 'is-home-returning' : ''} ${activeTab === 'home' && isHomeChatOpen ? 'is-home-chatting' : ''}`}
       aria-busy={isAppLoading}
     >
@@ -963,7 +1084,12 @@ function NotificationSwipeItem({ notification, onRead, onDelete }) {
   const Icon = notification.icon;
 
   const handlePointerDown = (event) => {
-    gestureRef.current = { x: event.clientX, y: event.clientY, initialOffset: offset };
+    gestureRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      initialOffset: offset,
+      deleteArmed: offset <= -60,
+    };
     suppressClickRef.current = false;
   };
 
@@ -973,11 +1099,20 @@ function NotificationSwipeItem({ notification, onRead, onDelete }) {
     const deltaY = event.clientY - gestureRef.current.y;
     if (Math.abs(deltaY) > Math.abs(deltaX)) return;
     if (Math.abs(deltaX) > 5) suppressClickRef.current = true;
-    setOffset(Math.max(-68, Math.min(0, gestureRef.current.initialOffset + deltaX)));
+    const minimumOffset = gestureRef.current.deleteArmed ? -132 : -68;
+    setOffset(Math.max(minimumOffset, Math.min(0, gestureRef.current.initialOffset + deltaX)));
   };
 
-  const finishPointerGesture = () => {
+  const finishPointerGesture = (event, allowDelete = true) => {
     if (!gestureRef.current) return;
+    const gesture = gestureRef.current;
+    const deltaX = event ? event.clientX - gesture.x : 0;
+    if (allowDelete && gesture.deleteArmed && deltaX < -38) {
+      gestureRef.current = null;
+      suppressClickRef.current = true;
+      deleteNotification();
+      return;
+    }
     setOffset((current) => (current < -30 ? -68 : 0));
     gestureRef.current = null;
     window.setTimeout(() => {
@@ -1010,7 +1145,7 @@ function NotificationSwipeItem({ notification, onRead, onDelete }) {
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={finishPointerGesture}
-        onPointerCancel={finishPointerGesture}
+        onPointerCancel={(event) => finishPointerGesture(event, false)}
       >
         <span className="notification-item-icon"><Icon size={18} aria-hidden="true" /></span>
         <span className="notification-item-copy">
@@ -1123,16 +1258,23 @@ function BottomNav({ activeTab, onSelectTab }) {
     <nav className="bottom-nav" aria-label="하단 메뉴">
       {tabs.map((tab) => {
         const Icon = tab.icon;
+        const isActive = activeTab === tab.id;
         return (
           <button
-            className={`nav-item ${activeTab === tab.id ? 'is-active' : ''}`}
+            className={`nav-item ${isActive ? 'is-active' : ''}`}
             key={tab.id}
             type="button"
-            aria-current={activeTab === tab.id ? 'page' : undefined}
+            aria-current={isActive ? 'page' : undefined}
             onClick={() => onSelectTab(tab.id)}
           >
             <span className="nav-icon">
-              <Icon size={21} strokeWidth={activeTab === tab.id ? 2.5 : 2} aria-hidden="true" />
+              <Icon
+                size={21}
+                strokeWidth={isActive ? 2.35 : 2}
+                fill={isActive ? 'currentColor' : 'none'}
+                fillOpacity={isActive ? 0.22 : 0}
+                aria-hidden="true"
+              />
             </span>
             <span>{tab.label}</span>
           </button>
@@ -3190,31 +3332,36 @@ function HighlightedMessage({ text, query }) {
   return <>{text.slice(0, start)}<mark>{text.slice(start, end)}</mark>{text.slice(end)}</>;
 }
 
-function buildActivityWeeks(weekCount = 14) {
+function buildMonthActivity(monthOffset = 0) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const mondayOffset = (today.getDay() + 6) % 7;
-  const currentMonday = new Date(today);
-  currentMonday.setDate(today.getDate() - mondayOffset);
-  const startDate = new Date(currentMonday);
-  startDate.setDate(currentMonday.getDate() - ((weekCount - 1) * 7));
-
-  return Array.from({ length: weekCount }, (_, weekIndex) => (
+  const monthDate = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
+  const startDate = new Date(monthDate);
+  startDate.setDate(1 - ((monthDate.getDay() + 6) % 7));
+  const weeks = Array.from({ length: 6 }, (_, weekIndex) => (
     Array.from({ length: 7 }, (_, dayIndex) => {
       const date = new Date(startDate);
       date.setDate(startDate.getDate() + (weekIndex * 7) + dayIndex);
       const isFuture = date > today;
+      const isInMonth = date.getMonth() === monthDate.getMonth();
       const activityValue = (date.getDate() * 3 + date.getMonth() * 5 + weekIndex) % 11;
-      const level = isFuture ? null : activityValue >= 8 ? 3 : activityValue >= 5 ? 2 : activityValue >= 3 ? 1 : 0;
+      const level = isFuture || !isInMonth ? null : activityValue >= 8 ? 3 : activityValue >= 5 ? 2 : activityValue >= 3 ? 1 : 0;
       return {
         date,
         day: date.getDate(),
         month: date.getMonth() + 1,
         level,
         isFuture,
+        isInMonth,
       };
     })
   ));
+
+  return {
+    id: `${monthDate.getFullYear()}-${monthDate.getMonth() + 1}`,
+    label: `${monthDate.getFullYear()}년 ${monthDate.getMonth() + 1}월`,
+    weeks,
+  };
 }
 
 const growthData = {
@@ -3240,8 +3387,9 @@ const growthData = {
 
 function ProfileView({ personalProfile, setPersonalProfile, selectedTranslation }) {
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
+  const [heatmapHistoryOpen, setHeatmapHistoryOpen] = useState(false);
   const [showStreakNotice, setShowStreakNotice] = useState(false);
-  const activityWeeks = useMemo(() => buildActivityWeeks(), []);
+  const activityMonth = useMemo(() => buildMonthActivity(), []);
 
   useEffect(() => {
     const todayKey = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
@@ -3265,42 +3413,23 @@ function ProfileView({ personalProfile, setPersonalProfile, selectedTranslation 
         <div className="profile-copy">
           <span>{churchInfo.name}</span>
           <h2>{personalProfile.name}</h2>
-          <p>{churchInfo.department} · {personalProfile.verseRef}</p>
+          <p>@{personalProfile.nickname} · {churchInfo.department}</p>
+          <small>{personalProfile.verseRef}</small>
         </div>
         <ChevronRight size={18} aria-hidden="true" />
       </button>
 
-      <section className="activity-calendar" aria-label="최근 14주 말씀 읽기 활동">
-        <div className="heatmap-month-axis" aria-hidden="true">
-          {activityWeeks.map((week, index) => {
-            const monthStart = week.find(({ day }) => day === 1);
-            return <span key={week[0].date.toISOString()}>{index === 0 ? `${week[0].month}월` : monthStart ? `${monthStart.month}월` : ''}</span>;
-          })}
-        </div>
-        <div className="heatmap-body">
-          <div className="heatmap-weekdays" aria-hidden="true"><span>월</span><span /><span>수</span><span /><span>금</span><span /><span>일</span></div>
-          <div className="calendar-grid">
-            {activityWeeks.map((week) => (
-              <div className="calendar-week" key={week[0].date.toISOString()}>
-                {week.map((item) => (
-                  <span
-                    className={item.isFuture ? 'is-future' : `level-${item.level}`}
-                    aria-label={`${item.month}월 ${item.day}일${item.isFuture ? '' : `, 활동 ${item.level}단계`}`}
-                    key={item.date.toISOString()}
-                  >
-                    <small aria-hidden="true">{item.day}</small>
-                  </span>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
+      <button className="activity-calendar" type="button" aria-label={`${activityMonth.label} 말씀 기록, 전체 기록 열기`} onClick={() => setHeatmapHistoryOpen(true)}>
+        <div className="heatmap-heading"><strong>{activityMonth.label}</strong><span>전체 기록 <ChevronRight size={14} /></span></div>
+        <MonthHeatmapGrid activityMonth={activityMonth} />
         <div className="calendar-legend" aria-label="말씀 읽기 활동 강도">
           <span>적음</span><i className="level-0" /><i className="level-1" /><i className="level-2" /><i className="level-3" /><span>많음</span>
         </div>
-      </section>
+      </button>
 
       <GrowthChart />
+
+      {heatmapHistoryOpen && <HeatmapHistorySheet onClose={() => setHeatmapHistoryOpen(false)} />}
 
       {profileEditorOpen && (
         <SelfProfileEditor
@@ -3313,6 +3442,60 @@ function ProfileView({ personalProfile, setPersonalProfile, selectedTranslation 
           }}
         />
       )}
+    </div>
+  );
+}
+
+function MonthHeatmapGrid({ activityMonth }) {
+  return (
+    <div className="month-heatmap-grid">
+      <div className="heatmap-weekday-axis" aria-hidden="true">
+        {['월', '화', '수', '목', '금', '토', '일'].map((day) => <span key={day}>{day}</span>)}
+      </div>
+      <div className="heatmap-grid-body">
+        <div className="heatmap-week-axis" aria-hidden="true">
+          {activityMonth.weeks.map((week, index) => <span key={week[0].date.toISOString()}>{index + 1}주</span>)}
+        </div>
+        <div className="calendar-grid">
+          {activityMonth.weeks.map((week) => (
+            <div className="calendar-week" key={week[0].date.toISOString()}>
+              {week.map((item) => (
+                <span
+                  className={!item.isInMonth ? 'is-outside-month' : item.isFuture ? 'is-future' : `level-${item.level}`}
+                  aria-label={item.isInMonth ? `${item.month}월 ${item.day}일${item.isFuture ? '' : `, 활동 ${item.level}단계`}` : undefined}
+                  aria-hidden={!item.isInMonth ? 'true' : undefined}
+                  key={item.date.toISOString()}
+                >
+                  {item.isInMonth && <small aria-hidden="true">{item.day}</small>}
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HeatmapHistorySheet({ onClose }) {
+  const activityMonths = useMemo(() => (
+    Array.from({ length: 12 }, (_, index) => buildMonthActivity(-index))
+  ), []);
+
+  return (
+    <div className="heatmap-history-layer">
+      <button className="heatmap-history-backdrop" type="button" aria-label="말씀 기록 닫기" onClick={onClose} />
+      <section className="heatmap-history-sheet" role="dialog" aria-modal="true" aria-labelledby="heatmap-history-title">
+        <header><div><h2 id="heatmap-history-title">말씀 기록</h2><p>최근 12개월</p></div><button type="button" aria-label="말씀 기록 닫기" onClick={onClose}><X size={21} /></button></header>
+        <div className="heatmap-history-scroll">
+          {activityMonths.map((month) => (
+            <article key={month.id}>
+              <h3>{month.label}</h3>
+              <MonthHeatmapGrid activityMonth={month} />
+            </article>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
@@ -3364,6 +3547,7 @@ function SelfProfileEditor({ profile, selectedTranslation, onClose, onSave }) {
   const [draft, setDraft] = useState(profile);
   const [uploadError, setUploadError] = useState('');
   const [versePickerOpen, setVersePickerOpen] = useState(false);
+  const nicknameCheck = useMemo(() => validateNickname(draft.nickname ?? '', profile.nickname ?? ''), [draft.nickname, profile.nickname]);
 
   const loadProfileImage = (event) => {
     const file = event.target.files?.[0];
@@ -3383,8 +3567,8 @@ function SelfProfileEditor({ profile, selectedTranslation, onClose, onSave }) {
   const saveProfile = () => {
     const verseRef = draft.verseRef.trim();
     const representativeVerse = draft.representativeVerse.trim();
-    if (!verseRef || !representativeVerse) return;
-    onSave({ ...draft, verseRef, representativeVerse });
+    if (!verseRef || !representativeVerse || nicknameCheck.state !== 'available') return;
+    onSave({ ...draft, nickname: nicknameCheck.normalized, verseRef, representativeVerse });
   };
 
   return (
@@ -3404,6 +3588,18 @@ function SelfProfileEditor({ profile, selectedTranslation, onClose, onSave }) {
         </div>
 
         <div className="self-profile-fields">
+          <label className="nickname-field">
+            <span>닉네임 <small>친구 추가에 사용돼요</small></span>
+            <input
+              aria-label="닉네임"
+              autoComplete="off"
+              maxLength={16}
+              value={draft.nickname ?? ''}
+              onChange={(event) => setDraft((current) => ({ ...current, nickname: event.target.value }))}
+              placeholder="한글 2~8자"
+            />
+            <em className={`is-${nicknameCheck.state}`}>{nicknameCheck.message}</em>
+          </label>
           <span className="self-profile-field-label">대표 말씀</span>
           <button className="representative-verse-trigger" type="button" onClick={() => setVersePickerOpen(true)}>
             <span><BookOpen size={18} aria-hidden="true" /></span>
@@ -3412,7 +3608,7 @@ function SelfProfileEditor({ profile, selectedTranslation, onClose, onSave }) {
           </button>
         </div>
 
-        <button className="self-profile-save" type="button" onClick={saveProfile} disabled={!draft.verseRef.trim() || !draft.representativeVerse.trim()}>저장하기</button>
+        <button className="self-profile-save" type="button" onClick={saveProfile} disabled={!draft.verseRef.trim() || !draft.representativeVerse.trim() || nicknameCheck.state !== 'available'}>저장하기</button>
       </section>
 
       {versePickerOpen && (
