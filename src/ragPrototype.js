@@ -1,4 +1,4 @@
-import { bibleCatalog, loadKrvChapter } from './bibleData';
+import { bibleCatalog, loadBibleChapter } from './bibleData';
 
 const bibleSearchTopics = [
   {
@@ -65,7 +65,7 @@ export async function retrieveBibleSearchAnswer(question) {
 
   const citations = await Promise.all(topic.passages.map(async (passage) => {
     const book = bibleCatalog.find(({ id }) => id === passage.bookId);
-    const chapterVerses = await loadKrvChapter(passage.bookId, passage.chapter);
+    const chapterVerses = await loadBibleChapter('GAE', passage.bookId, passage.chapter);
     const matchedVerses = chapterVerses.filter(({ verse }) => passage.verses.includes(verse));
     const verseLabel = passage.verses.length > 1
       ? `${passage.verses[0]}-${passage.verses.at(-1)}`
@@ -77,7 +77,7 @@ export async function retrieveBibleSearchAnswer(question) {
       chapter: passage.chapter,
       reference: `${book.name} ${passage.chapter}:${verseLabel}`,
       text: matchedVerses.map(({ text }) => text).join(' '),
-      translation: '개역한글',
+      translation: '개역개정',
     };
   }));
 

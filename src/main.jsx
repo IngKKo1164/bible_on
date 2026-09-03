@@ -39,7 +39,7 @@ import {
   X,
 } from 'lucide-react';
 import { BibleOnLogo, BibleBookIcon as BookOpen, ChurchCrossIcon as Church, SixteenthNoteIcon } from './brandIcons';
-import { bibleCatalog, loadKrvChapter, preloadKrvBible } from './bibleData';
+import { bibleCatalog, loadBibleChapter, preloadBible } from './bibleData';
 import OnboardingApp from './OnboardingApp';
 import './styles.css';
 
@@ -89,7 +89,7 @@ const defaultRecentPassages = Object.entries(readingHighlights)
   .reverse();
 
 const translations = [
-  { id: 'KRV', label: '개역한글' },
+  { id: 'GAE', label: '개역개정' },
   { id: 'RNKSV', label: '새번역' },
 ];
 
@@ -471,7 +471,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [selectedBookId, setSelectedBookId] = useState('philippians');
   const [selectedChapter, setSelectedChapter] = useState(4);
-  const [selectedTranslation, setSelectedTranslation] = useState('KRV');
+  const [selectedTranslation, setSelectedTranslation] = useState('GAE');
   const [selectedRef, setSelectedRef] = useState('빌립보서 4:6');
   const [favoriteRefs] = useState(['시편 23:1']);
   const [readVerseIds, setReadVerseIds] = useState([
@@ -515,14 +515,14 @@ function App() {
   useEffect(() => {
     let active = true;
 
-    const preloadBible = async () => {
+    const preloadBibleData = async () => {
       setIsAppLoading(true);
       setLoadingError('');
       setLoadingProgress(0);
       const startedAt = Date.now();
 
       try {
-        await preloadKrvBible((completed, total) => {
+        await preloadBible(['GAE', 'RNKSV'], (completed, total) => {
           if (active) setLoadingProgress(Math.round((completed / total) * 100));
         });
         const remainingMinimumTime = Math.max(0, 700 - (Date.now() - startedAt));
@@ -538,7 +538,7 @@ function App() {
       }
     };
 
-    preloadBible();
+    preloadBibleData();
     return () => { active = false; };
   }, [loadingAttempt]);
 
@@ -584,6 +584,9 @@ function App() {
     }
     setIsHomeChatOpen(false);
     setActiveTab(tabId);
+    window.requestAnimationFrame(() => {
+      workspaceRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+    });
   };
 
   useEffect(() => {
@@ -913,7 +916,7 @@ function Topbar({ selectedTranslation, setSelectedTranslation, onOpenChatHistory
                       key={translation.id}
                       onClick={() => setSelectedTranslation(translation.id)}
                     >
-                      {translation.id === 'KRV' ? '개역개정' : '새번역'}
+                      {translation.label}
                     </button>
                   ))}
                 </div>
@@ -1850,15 +1853,8 @@ function BibleView({
     setHighlightPickerVerseId('');
     setNoteSheet(null);
 
-    if (selectedTranslation === 'RNKSV') {
-      setChapterState({ status: 'license-required', verses: [] });
-      return () => {
-        isCurrent = false;
-      };
-    }
-
     setChapterState({ status: 'loading', verses: [] });
-    loadKrvChapter(selectedBook.id, selectedChapter)
+    loadBibleChapter(selectedTranslation, selectedBook.id, selectedChapter)
       .then((verses) => {
         if (isCurrent) setChapterState({ status: 'ready', verses });
       })
@@ -1874,8 +1870,11 @@ function BibleView({
   const activeVerses = useMemo(() => {
     return chapterState.verses.map((verse) => ({
       ...verse,
-      id: `${selectedBook.id}-${selectedChapter}-${verse.verse}`,
-      ref: `${selectedBook.name} ${selectedChapter}:${verse.verse}`,
+      id: `${selectedBook.id}-${selectedChapter}-${verse.label ?? verse.verse}`,
+      ref: `${selectedBook.name} ${selectedChapter}:${verse.label ?? verse.verse}`,
+      headings: Array.isArray(verse.segments)
+        ? verse.segments.filter((segment) => segment.type === 'heading')
+        : [],
     }));
   }, [chapterState.verses, selectedBook.id, selectedBook.name, selectedChapter]);
   const chapterReadCount = activeVerses.filter((verse) => readVerseIds.includes(verse.id)).length;
@@ -1900,7 +1899,7 @@ function BibleView({
     setSelectedVerse(null);
     setSelectedRef(
       activeVerses.length
-        ? `${selectedBook.name} ${selectedChapter}:${activeVerses[0].verse}`
+        ? `${selectedBook.name} ${selectedChapter}:${activeVerses[0].label ?? activeVerses[0].verse}`
         : `${selectedBook.name} ${selectedChapter}장`
     );
   }, [activeVerses, selectedBook.name, selectedChapter, setSelectedRef]);
@@ -2147,7 +2146,7 @@ function BibleView({
           <div>
             <span>{selectedTranslation} · {translations.find((item) => item.id === selectedTranslation)?.label}</span>
             <h2>{selectedBook.name} {selectedChapter}장</h2>
-            <p>{selectedTranslation === 'KRV' ? '개역한글 전문' : '원문 데이터 준비 중'}</p>
+            <p>대한성서공회 사용 허가 본문</p>
           </div>
           <div className="reader-header-side">
             <button className="icon-button small" type="button" aria-label="본문 메뉴" title="본문 메뉴">
@@ -2168,14 +2167,6 @@ function BibleView({
           </div>
         )}
 
-        {chapterState.status === 'license-required' && (
-          <div className="chapter-source-empty">
-            <ShieldCheck size={22} aria-hidden="true" />
-            <strong>새번역 원문 데이터 준비 중</strong>
-            <p>대한성서공회 사용 허가 후 전달받은 전문을 이 화면에서 바로 제공합니다.</p>
-          </div>
-        )}
-
         {chapterState.status === 'error' && (
           <div className="chapter-source-empty" role="alert">
             <BookOpen size={22} aria-hidden="true" />
@@ -2192,42 +2183,45 @@ function BibleView({
             const highlight = verseHighlights[verse.id];
             const isHighlighted = Boolean(highlight);
             return (
-              <div
-                className={`verse-wrap ${isSelected ? 'is-selected' : ''}`}
-                key={verse.id}
-              >
-                <button
-                  className="verse-row"
-                  type="button"
-                  title="0.5초 이상 누르면 읽음으로 표시됩니다"
-                  onContextMenu={(event) => event.preventDefault()}
-                  onPointerDown={(event) => handleVersePointerDown(event, verse)}
-                  onPointerUp={(event) => handleVersePointerUp(event, verse)}
-                  onPointerCancel={cancelReaderGesture}
-                  onClick={() => handleVerseClick(verse)}
-                >
-                  <span
-                    className={`verse-number ${isRead ? 'is-read' : ''}`}
-                    aria-label={`${verse.verse}절, ${isRead ? '읽음' : '읽지 않음'}${hasNote ? ', 메모 있음' : ''}`}
+              <React.Fragment key={verse.id}>
+                {verse.headings.map((heading, index) => (
+                  <h3 className="bible-section-heading" key={`${verse.id}-heading-${index}`}>
+                    {heading.text}
+                  </h3>
+                ))}
+                <div className={`verse-wrap ${isSelected ? 'is-selected' : ''}`}>
+                  <button
+                    className="verse-row"
+                    type="button"
+                    title="0.5초 이상 누르면 읽음으로 표시됩니다"
+                    onContextMenu={(event) => event.preventDefault()}
+                    onPointerDown={(event) => handleVersePointerDown(event, verse)}
+                    onPointerUp={(event) => handleVersePointerUp(event, verse)}
+                    onPointerCancel={cancelReaderGesture}
+                    onClick={() => handleVerseClick(verse)}
                   >
-                    {hasNote && <NotebookPen className="verse-note-indicator" size={10} aria-hidden="true" />}
-                    <span>{verse.verse}</span>
-                  </span>
-                  <span className="verse-copy">
-                    <VerseHighlightedText text={verse.text} highlight={highlight} />
-                  </span>
-                </button>
-                {isSelected && (
-                  <div className="verse-actions" aria-label={`${verse.ref} 동작`}>
-                    <span>{verse.ref}</span>
-                    <button className={hasNote ? 'is-on' : ''} type="button" onClick={() => openNoteEditor(verse)}>
-                      <NotebookPen size={16} aria-hidden="true" />{hasNote ? '메모 수정' : '메모'}
-                    </button>
-                    <button className={isHighlighted ? 'is-on' : ''} type="button" onClick={() => handleHighlightButton(verse.id)}>
-                      <Highlighter size={16} aria-hidden="true" />{isHighlighted ? '강조 해제' : '강조'}
-                    </button>
-                    {highlightPickerVerseId === verse.id && (
-                      <div className="highlight-popover" role="dialog" aria-label={`${verse.ref} 강조 설정`}>
+                    <span
+                      className={`verse-number ${isRead ? 'is-read' : ''}`}
+                      aria-label={`${verse.label ?? verse.verse}절, ${isRead ? '읽음' : '읽지 않음'}${hasNote ? ', 메모 있음' : ''}`}
+                    >
+                      {hasNote && <NotebookPen className="verse-note-indicator" size={10} aria-hidden="true" />}
+                      <span>{verse.label ?? verse.verse}</span>
+                    </span>
+                    <span className="verse-copy">
+                      <VerseHighlightedText text={verse.text} highlight={highlight} />
+                    </span>
+                  </button>
+                  {isSelected && (
+                    <div className="verse-actions" aria-label={`${verse.ref} 동작`}>
+                      <span>{verse.ref}</span>
+                      <button className={hasNote ? 'is-on' : ''} type="button" onClick={() => openNoteEditor(verse)}>
+                        <NotebookPen size={16} aria-hidden="true" />{hasNote ? '메모 수정' : '메모'}
+                      </button>
+                      <button className={isHighlighted ? 'is-on' : ''} type="button" onClick={() => handleHighlightButton(verse.id)}>
+                        <Highlighter size={16} aria-hidden="true" />{isHighlighted ? '강조 해제' : '강조'}
+                      </button>
+                      {highlightPickerVerseId === verse.id && (
+                        <div className="highlight-popover" role="dialog" aria-label={`${verse.ref} 강조 설정`}>
                         <div className="highlight-method-row" aria-label="강조 방식">
                           {highlightMethodOptions.map((option) => {
                             const MethodIcon = option.icon;
@@ -2265,11 +2259,12 @@ function BibleView({
                           })}
                           <button className="highlight-apply" type="button" onClick={() => applyHighlight(verse.id)}>적용</button>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </React.Fragment>
             );
           })}
         </div>}
@@ -2285,9 +2280,9 @@ function BibleView({
         </footer>
         <div className="source-note">
           <span>
-            {selectedTranslation === 'KRV'
-              ? '성경전서 개역한글판 (1961) · 대한성서공회'
-              : '성경전서 새번역 · 사용 허가 후 전문 제공'}
+            {selectedTranslation === 'GAE'
+              ? '성경전서 개역개정판 · 대한성서공회 사용 허가'
+              : '성경전서 새번역 · 대한성서공회 사용 허가'}
           </span>
         </div>
       </article>

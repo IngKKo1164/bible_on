@@ -67,33 +67,52 @@ export const bibleCatalog = [
   { id: 'revelation', name: '요한계시록', file: 'Revelation', chapters: 22, testament: '신약' },
 ];
 
+const translationSources = {
+  GAE: 'gae',
+  RNKSV: 'rnksv',
+};
+
 const bookCache = new Map();
 
-async function loadKrvBook(book) {
-  let data = bookCache.get(book.file);
+async function loadBibleBook(translationId, book) {
+  const translationDirectory = translationSources[translationId];
+  if (!translationDirectory) throw new Error(`Unknown Bible translation: ${translationId}`);
+
+  const cacheKey = `${translationId}:${book.file}`;
+  let data = bookCache.get(cacheKey);
   if (data) return data;
 
   const baseUrl = import.meta.env.BASE_URL ?? '/';
-  const response = await fetch(`${baseUrl}data/krv/${book.file}.json`);
-  if (!response.ok) throw new Error(`Failed to load ${book.name}`);
+  const response = await fetch(`${baseUrl}data/bible/${translationDirectory}/${book.file}.json`);
+  if (!response.ok) throw new Error(`Failed to load ${translationId} ${book.name}`);
   data = await response.json();
-  bookCache.set(book.file, data);
+  if (data.translation?.id !== translationId || data.book?.id !== book.id) {
+    throw new Error(`Invalid Bible data: ${translationId} ${book.name}`);
+  }
+  bookCache.set(cacheKey, data);
   return data;
 }
 
-export async function loadKrvChapter(bookId, chapterNumber) {
+export async function loadBibleChapter(translationId, bookId, chapterNumber) {
   const book = bibleCatalog.find((item) => item.id === bookId);
   if (!book) throw new Error(`Unknown Bible book: ${bookId}`);
 
-  const data = await loadKrvBook(book);
+  const data = await loadBibleBook(translationId, book);
 
   const chapter = data.chapters.find((item) => item.chapter === chapterNumber);
   if (!chapter) throw new Error(`Missing chapter: ${book.name} ${chapterNumber}`);
   return chapter.verses;
 }
 
-export async function preloadKrvBible(onProgress = () => {}, concurrency = 6) {
-  const total = bibleCatalog.length;
+export async function preloadBible(
+  translationIds = Object.keys(translationSources),
+  onProgress = () => {},
+  concurrency = 6,
+) {
+  const booksToLoad = translationIds.flatMap((translationId) => (
+    bibleCatalog.map((book) => ({ translationId, book }))
+  ));
+  const total = booksToLoad.length;
   let completed = 0;
   let nextBookIndex = 0;
 
@@ -103,7 +122,8 @@ export async function preloadKrvBible(onProgress = () => {}, concurrency = 6) {
     while (nextBookIndex < total) {
       const bookIndex = nextBookIndex;
       nextBookIndex += 1;
-      await loadKrvBook(bibleCatalog[bookIndex]);
+      const { translationId, book } = booksToLoad[bookIndex];
+      await loadBibleBook(translationId, book);
       completed += 1;
       onProgress(completed, total);
     }

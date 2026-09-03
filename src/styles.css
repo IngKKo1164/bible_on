@@ -2255,6 +2255,18 @@ button.list-row:active,
   border-top: 0;
 }
 
+.bible-section-heading {
+  color: var(--ink);
+  font-size: 18.2px;
+  font-weight: 850;
+  line-height: 1.4;
+  margin: 15px 0 5px 35px;
+}
+
+.verse-list > .bible-section-heading:first-child {
+  margin-top: 3px;
+}
+
 .verse-wrap {
   border-bottom: 0;
 }
