@@ -104,6 +104,36 @@ export async function loadBibleChapter(translationId, bookId, chapterNumber) {
   return chapter.verses;
 }
 
+export async function searchBibleVerses(translationId, query, limit = 30) {
+  const normalizedQuery = query.trim().toLocaleLowerCase('ko-KR').replace(/\s+/g, ' ');
+  if (!normalizedQuery) return [];
+
+  const books = await Promise.all(bibleCatalog.map(async (book) => ({
+    book,
+    data: await loadBibleBook(translationId, book),
+  })));
+  const results = [];
+
+  for (const { book, data } of books) {
+    for (const chapter of data.chapters) {
+      for (const verse of chapter.verses) {
+        if (!verse.text.toLocaleLowerCase('ko-KR').replace(/\s+/g, ' ').includes(normalizedQuery)) continue;
+        results.push({
+          bookId: book.id,
+          bookName: book.name,
+          chapter: chapter.chapter,
+          verse: verse.verse,
+          reference: `${book.name} ${chapter.chapter}:${verse.verse}`,
+          text: verse.text,
+        });
+        if (results.length >= limit) return results;
+      }
+    }
+  }
+
+  return results;
+}
+
 export async function preloadBible(
   translationIds = Object.keys(translationSources),
   onProgress = () => {},

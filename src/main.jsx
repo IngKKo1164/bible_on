@@ -38,7 +38,7 @@ import {
   X,
 } from 'lucide-react';
 import { BibleOnLogo, BibleBookIcon as BookOpen, ChurchCrossIcon as Church, SixteenthNoteIcon } from './brandIcons';
-import { bibleCatalog, loadBibleChapter, preloadBible } from './bibleData';
+import { bibleCatalog, loadBibleChapter, preloadBible, searchBibleVerses } from './bibleData';
 import OnboardingApp from './OnboardingApp';
 import './styles.css';
 
@@ -140,13 +140,6 @@ const hymns = [
   { title: '내 평생에 가는 길', tone: '위로', duration: '4:12' },
   { title: '주 하나님 지으신 모든 세계', tone: '경배', duration: '3:58' },
   { title: '예수 사랑하심은', tone: '확신', duration: '2:48' },
-];
-
-const profileItems = [
-  { icon: UserRound, title: '프로필 설정', description: '이름, 소속 부서, 공개 범위' },
-  { icon: Bell, title: '알림 설정', description: '예배, QT, 커뮤니티 알림' },
-  { icon: ShieldCheck, title: '프리미엄', description: '로드맵과 개인화 추천 사용 중' },
-  { icon: Settings, title: '앱 설정', description: '번역본, 글자 크기, 접근성' },
 ];
 
 const defaultPersonalProfile = {
@@ -328,6 +321,12 @@ const churchMessageMembers = [
     name: conversation.name,
     department: conversation.department,
     role: conversation.role,
+    verseRef: ['잠언 16:9', '시편 37:5', '시편 150:6'][index],
+    representativeVerse: [
+      '사람이 마음으로 자기의 길을 계획할지라도 그의 걸음을 인도하시는 이는 여호와시니라.',
+      '네 길을 여호와께 맡기라 그를 의지하면 그가 이루시고.',
+      '호흡이 있는 자마다 여호와를 찬양할지어다.',
+    ][index],
     tone: ['violet', 'green', 'rose'][index % 3],
   })),
   ...churchDirectoryMembers,
@@ -777,10 +776,9 @@ function App() {
         )}
         {activeTab === 'profile' && (
           <ProfileView
-            readCount={readVerseIds.length}
-            favoriteCount={favoriteRefs.length}
             personalProfile={personalProfile}
             setPersonalProfile={setPersonalProfile}
+            selectedTranslation={selectedTranslation}
           />
         )}
       </section>
@@ -2729,9 +2727,11 @@ function MemberProfileSheet({ member, onClose, onMessage }) {
           <div><dt>부서</dt><dd>{member.department}</dd></div>
           <div><dt>직책</dt><dd>{member.role}</dd></div>
         </dl>
-        <button className="member-profile-message" type="button" onClick={onMessage}>
-          <MessageCircle size={19} aria-hidden="true" />메시지 보내기
-        </button>
+        {onMessage && (
+          <button className="member-profile-message" type="button" onClick={onMessage}>
+            <MessageCircle size={19} aria-hidden="true" />메시지 보내기
+          </button>
+        )}
       </section>
     </div>
   );
@@ -2750,6 +2750,9 @@ function MemberSelectionSheet({
   const [query, setQuery] = useState('');
   const [roomName, setRoomName] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
+  const [step, setStep] = useState('members');
+  const [previewMember, setPreviewMember] = useState(null);
+  const profileHoldTimerRef = useRef(null);
   const normalizedQuery = query.trim().toLowerCase();
   const filteredCandidates = candidates.filter((member) => (
     [member.name, member.department, member.role]
@@ -2765,70 +2768,166 @@ function MemberSelectionSheet({
     ));
   };
 
+  const cancelProfileHold = () => {
+    window.clearTimeout(profileHoldTimerRef.current);
+    profileHoldTimerRef.current = null;
+  };
+
+  const startProfileHold = (member) => {
+    cancelProfileHold();
+    profileHoldTimerRef.current = window.setTimeout(() => {
+      setPreviewMember(member);
+      profileHoldTimerRef.current = null;
+    }, 500);
+  };
+
+  useEffect(() => () => cancelProfileHold(), []);
+
+  const confirmSelection = () => {
+    if (roomNameEnabled) {
+      setStep('name');
+      return;
+    }
+    onConfirm(selectedMembers, '');
+  };
+
   return (
     <div className="member-picker-layer">
       <button className="member-picker-backdrop" type="button" aria-label={`${title} 닫기`} onClick={onClose} />
-      <section className="member-picker-sheet" role="dialog" aria-modal="true" aria-labelledby="member-picker-title">
-        <header>
-          <div><h2 id="member-picker-title">{title}</h2><p>{description}</p></div>
-          <button type="button" aria-label={`${title} 닫기`} onClick={onClose}><X size={21} aria-hidden="true" /></button>
-        </header>
-        <div className="member-picker-controls">
-          {roomNameEnabled && (
-            <label className="member-picker-room-name">
-              <span>채팅방 이름 <small>선택</small></span>
+      {step === 'members' ? (
+        <section className="member-picker-sheet" role="dialog" aria-modal="true" aria-labelledby="member-picker-title">
+          <header>
+            <div><h2 id="member-picker-title">{title}</h2><p>{description}</p></div>
+            <button type="button" aria-label={`${title} 닫기`} onClick={onClose}><X size={21} aria-hidden="true" /></button>
+          </header>
+
+          {selectedMembers.length > 0 && (
+            <section className="selected-member-strip" aria-label={`선택한 구성원 ${selectedMembers.length}명`}>
+              <div className="selected-member-strip-heading"><strong>선택됨</strong><span>{selectedMembers.length}</span></div>
+              <div className="selected-member-strip-list">
+                {selectedMembers.map((member) => (
+                  <article
+                    key={member.id}
+                    tabIndex="0"
+                    aria-label={`${member.name} 프로필, 길게 눌러 상세 보기`}
+                    onPointerDown={() => startProfileHold(member)}
+                    onPointerUp={cancelProfileHold}
+                    onPointerCancel={cancelProfileHold}
+                    onPointerLeave={cancelProfileHold}
+                    onContextMenu={(event) => event.preventDefault()}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') setPreviewMember(member);
+                    }}
+                  >
+                    <span className={`directory-avatar tone-${member.tone ?? 'violet'}`} aria-hidden="true">
+                      <UserRound className="default-profile-glyph" />
+                    </span>
+                    <strong>{member.name}</strong>
+                    <button
+                      type="button"
+                      aria-label={`${member.name} 선택 취소`}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={() => toggleMember(member.id)}
+                    >
+                      <X size={11} strokeWidth={3} aria-hidden="true" />
+                    </button>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <div className="member-picker-controls">
+            <label className="member-picker-search">
+              <Search size={18} aria-hidden="true" />
               <input
+                aria-label="구성원 검색"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="구성원 검색"
+              />
+              {query && <button type="button" aria-label="검색어 지우기" onClick={() => setQuery('')}><X size={16} /></button>}
+            </label>
+          </div>
+          <div className="member-picker-list">
+            {filteredCandidates.map((member) => {
+              const selected = selectedIds.includes(member.id);
+              return (
+                <button
+                  className={selected ? 'is-selected' : ''}
+                  type="button"
+                  aria-pressed={selected}
+                  key={member.id}
+                  onClick={() => toggleMember(member.id)}
+                >
+                  <span className={`directory-avatar tone-${member.tone ?? 'violet'}`} aria-hidden="true">
+                    <UserRound className="default-profile-glyph" />
+                  </span>
+                  <span><strong>{member.name}</strong><small>{member.department} · {member.role}</small></span>
+                  <i aria-hidden="true">{selected && <Check size={16} />}</i>
+                </button>
+              );
+            })}
+            {filteredCandidates.length === 0 && <p>검색 결과가 없어요.</p>}
+          </div>
+          <footer>
+            <span>{selectedMembers.length}명 선택</span>
+            <button
+              type="button"
+              disabled={selectedMembers.length < minimumSelection}
+              onClick={confirmSelection}
+            >
+              {roomNameEnabled ? '다음' : confirmLabel(selectedMembers.length)}
+            </button>
+          </footer>
+        </section>
+      ) : (
+        <section className="member-picker-sheet member-picker-name-sheet" role="dialog" aria-modal="true" aria-labelledby="member-picker-name-title">
+          <header>
+            <div className="member-picker-name-heading">
+              <button type="button" aria-label="구성원 선택으로 돌아가기" onClick={() => setStep('members')}><ChevronLeft size={22} /></button>
+              <div><h2 id="member-picker-name-title">채팅방 이름 설정</h2><p>모든 참여자에게 같은 이름으로 표시돼요</p></div>
+            </div>
+            <button type="button" aria-label="채팅방 이름 설정 닫기" onClick={onClose}><X size={21} aria-hidden="true" /></button>
+          </header>
+          <div className="member-picker-name-content">
+            <div className="room-name-avatar-stack" aria-label={`${selectedMembers.length}명 참여`}>
+              {selectedMembers.slice(0, 4).map((member) => (
+                <span className={`directory-avatar tone-${member.tone ?? 'violet'}`} key={member.id} aria-hidden="true">
+                  <UserRound className="default-profile-glyph" />
+                </span>
+              ))}
+              {selectedMembers.length > 4 && <b>+{selectedMembers.length - 4}</b>}
+            </div>
+            <label className="member-picker-room-name">
+              <span>채팅방 이름</span>
+              <input
+                autoFocus
                 aria-label="단체 채팅방 이름"
                 maxLength={30}
                 value={roomName}
                 onChange={(event) => setRoomName(event.target.value)}
                 placeholder="예: 청년부 예배 준비팀"
               />
+              <small>{roomName.length}/30</small>
             </label>
-          )}
-          <label className="member-picker-search">
-            <Search size={18} aria-hidden="true" />
-            <input
-              aria-label="구성원 검색"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="구성원 검색"
-            />
-            {query && <button type="button" aria-label="검색어 지우기" onClick={() => setQuery('')}><X size={16} /></button>}
-          </label>
-        </div>
-        <div className="member-picker-list">
-          {filteredCandidates.map((member) => {
-            const selected = selectedIds.includes(member.id);
-            return (
-              <button
-                className={selected ? 'is-selected' : ''}
-                type="button"
-                aria-pressed={selected}
-                key={member.id}
-                onClick={() => toggleMember(member.id)}
-              >
-                <span className={`directory-avatar tone-${member.tone ?? 'violet'}`} aria-hidden="true">
-                  <UserRound className="default-profile-glyph" />
-                </span>
-                <span><strong>{member.name}</strong><small>{member.department} · {member.role}</small></span>
-                <i aria-hidden="true">{selected && <Check size={16} />}</i>
-              </button>
-            );
-          })}
-          {filteredCandidates.length === 0 && <p>검색 결과가 없어요.</p>}
-        </div>
-        <footer>
-          <span>{selectedMembers.length}명 선택</span>
-          <button
-            type="button"
-            disabled={selectedMembers.length < minimumSelection}
-            onClick={() => onConfirm(selectedMembers, roomName.trim())}
-          >
-            {confirmLabel(selectedMembers.length)}
-          </button>
-        </footer>
-      </section>
+          </div>
+          <footer>
+            <span>{selectedMembers.length}명 참여</span>
+            <button
+              type="button"
+              disabled={!roomName.trim()}
+              onClick={() => onConfirm(selectedMembers, roomName.trim())}
+            >
+              채팅방 만들기
+            </button>
+          </footer>
+        </section>
+      )}
+
+      {previewMember && (
+        <MemberProfileSheet member={previewMember} onClose={() => setPreviewMember(null)} />
+      )}
     </div>
   );
 }
@@ -3091,16 +3190,75 @@ function HighlightedMessage({ text, query }) {
   return <>{text.slice(0, start)}<mark>{text.slice(start, end)}</mark>{text.slice(end)}</>;
 }
 
-function ProfileView({ readCount, favoriteCount, personalProfile, setPersonalProfile }) {
+function buildActivityWeeks(weekCount = 14) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const mondayOffset = (today.getDay() + 6) % 7;
+  const currentMonday = new Date(today);
+  currentMonday.setDate(today.getDate() - mondayOffset);
+  const startDate = new Date(currentMonday);
+  startDate.setDate(currentMonday.getDate() - ((weekCount - 1) * 7));
+
+  return Array.from({ length: weekCount }, (_, weekIndex) => (
+    Array.from({ length: 7 }, (_, dayIndex) => {
+      const date = new Date(startDate);
+      date.setDate(startDate.getDate() + (weekIndex * 7) + dayIndex);
+      const isFuture = date > today;
+      const activityValue = (date.getDate() * 3 + date.getMonth() * 5 + weekIndex) % 11;
+      const level = isFuture ? null : activityValue >= 8 ? 3 : activityValue >= 5 ? 2 : activityValue >= 3 ? 1 : 0;
+      return {
+        date,
+        day: date.getDate(),
+        month: date.getMonth() + 1,
+        level,
+        isFuture,
+      };
+    })
+  ));
+}
+
+const growthData = {
+  daily: {
+    label: '일간',
+    points: ['월', '화', '수', '목', '금', '토', '일'],
+    progress: [42, 68, 55, 81, 76, 90, 64],
+    attendance: [0, 0, 0, 0, 0, 0, 100],
+  },
+  weekly: {
+    label: '주간',
+    points: ['1주', '2주', '3주', '4주', '5주', '6주'],
+    progress: [48, 55, 63, 71, 68, 79],
+    attendance: [100, 100, 0, 100, 100, 100],
+  },
+  monthly: {
+    label: '월간',
+    points: ['4월', '5월', '6월', '7월', '8월', '9월'],
+    progress: [39, 51, 58, 66, 72, 78],
+    attendance: [75, 100, 75, 100, 100, 100],
+  },
+};
+
+function ProfileView({ personalProfile, setPersonalProfile, selectedTranslation }) {
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
+  const [showStreakNotice, setShowStreakNotice] = useState(false);
+  const activityWeeks = useMemo(() => buildActivityWeeks(), []);
+
+  useEffect(() => {
+    const todayKey = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
+    if (readStoredValue('bibleon.profileStreakNoticeDate', '') === todayKey) return undefined;
+    writeStoredValue('bibleon.profileStreakNoticeDate', todayKey);
+    setShowStreakNotice(true);
+    const timerId = window.setTimeout(() => setShowStreakNotice(false), 1000);
+    return () => window.clearTimeout(timerId);
+  }, []);
 
   return (
-    <div className="page-stack">
-      <div className="profile-streak-toast" role="status">
+    <div className="page-stack profile-page">
+      {showStreakNotice && <div className="profile-streak-toast" role="status">
         <span><Flame size={16} aria-hidden="true" /></span>
         <div><strong>7일 연속 읽기</strong><small>오늘도 말씀을 이어가고 있어요</small></div>
         <em>최고 12일</em>
-      </div>
+      </div>}
 
       <button className="profile-summary profile-summary-button" type="button" onClick={() => setProfileEditorOpen(true)}>
         <PersonalAvatar profile={personalProfile} />
@@ -3112,36 +3270,42 @@ function ProfileView({ readCount, favoriteCount, personalProfile, setPersonalPro
         <ChevronRight size={18} aria-hidden="true" />
       </button>
 
-      <section className="score-grid">
-        <Metric label="이번 달 읽은 절" value={`${readCount}절`} />
-        <Metric label="저장한 말씀" value={`${favoriteCount}개`} />
-        <Metric label="QT 나눔" value="6개" />
-      </section>
-
-      <Section title="최근 12주 말씀 기록" action="전체보기">
-        <div className="activity-calendar" aria-label="최근 12주 말씀 읽기 활동">
+      <section className="activity-calendar" aria-label="최근 14주 말씀 읽기 활동">
+        <div className="heatmap-month-axis" aria-hidden="true">
+          {activityWeeks.map((week, index) => {
+            const monthStart = week.find(({ day }) => day === 1);
+            return <span key={week[0].date.toISOString()}>{index === 0 ? `${week[0].month}월` : monthStart ? `${monthStart.month}월` : ''}</span>;
+          })}
+        </div>
+        <div className="heatmap-body">
+          <div className="heatmap-weekdays" aria-hidden="true"><span>월</span><span /><span>수</span><span /><span>금</span><span /><span>일</span></div>
           <div className="calendar-grid">
-            {Array.from({ length: 84 }, (_, index) => {
-              const activityValue = (index * 7 + Math.floor(index / 5)) % 10;
-              const level = activityValue >= 8 ? 3 : activityValue >= 6 ? 2 : activityValue >= 4 ? 1 : 0;
-              return <span className={`level-${level}`} aria-hidden="true" key={index} />;
-            })}
-          </div>
-          <div className="calendar-legend" aria-label="말씀 읽기 활동 강도">
-            <span>적음</span><i className="level-0" /><i className="level-1" /><i className="level-2" /><i className="level-3" /><span>많음</span>
+            {activityWeeks.map((week) => (
+              <div className="calendar-week" key={week[0].date.toISOString()}>
+                {week.map((item) => (
+                  <span
+                    className={item.isFuture ? 'is-future' : `level-${item.level}`}
+                    aria-label={`${item.month}월 ${item.day}일${item.isFuture ? '' : `, 활동 ${item.level}단계`}`}
+                    key={item.date.toISOString()}
+                  >
+                    <small aria-hidden="true">{item.day}</small>
+                  </span>
+                ))}
+              </div>
+            ))}
           </div>
         </div>
-      </Section>
+        <div className="calendar-legend" aria-label="말씀 읽기 활동 강도">
+          <span>적음</span><i className="level-0" /><i className="level-1" /><i className="level-2" /><i className="level-3" /><span>많음</span>
+        </div>
+      </section>
 
-      <Section title="내 설정">
-        <ListSurface>
-          {profileItems.map((item) => <ListRow key={item.title} icon={item.icon} title={item.title} description={item.description} />)}
-        </ListSurface>
-      </Section>
+      <GrowthChart />
 
       {profileEditorOpen && (
         <SelfProfileEditor
           profile={personalProfile}
+          selectedTranslation={selectedTranslation}
           onClose={() => setProfileEditorOpen(false)}
           onSave={(nextProfile) => {
             setPersonalProfile(nextProfile);
@@ -3153,6 +3317,41 @@ function ProfileView({ readCount, favoriteCount, personalProfile, setPersonalPro
   );
 }
 
+function GrowthChart() {
+  const [period, setPeriod] = useState('daily');
+  const [metric, setMetric] = useState('progress');
+  const activeData = growthData[period];
+  const values = activeData[metric];
+  const metricLabel = metric === 'progress' ? '말씀 진도율' : '예배 참석률';
+  const latestValue = values.at(-1);
+
+  return (
+    <section className="growth-panel" aria-label="성장 그래프">
+      <header>
+        <div><strong>{metricLabel}</strong><span>최근 {activeData.label} 기록</span></div>
+        <b>{latestValue}%</b>
+      </header>
+      <div className="growth-metric-switch" role="tablist" aria-label="성장 지표">
+        <button type="button" className={metric === 'progress' ? 'is-active' : ''} role="tab" aria-selected={metric === 'progress'} onClick={() => setMetric('progress')}>말씀 진도율</button>
+        <button type="button" className={metric === 'attendance' ? 'is-active' : ''} role="tab" aria-selected={metric === 'attendance'} onClick={() => setMetric('attendance')}>예배 참석률</button>
+      </div>
+      <div className="growth-chart" style={{ '--growth-columns': values.length }} aria-label={`${activeData.label} ${metricLabel} 그래프`}>
+        {values.map((value, index) => (
+          <div className="growth-column" key={activeData.points[index]}>
+            <div><span style={{ '--growth-value': `${value}%` }}><i>{value}</i></span></div>
+            <small>{activeData.points[index]}</small>
+          </div>
+        ))}
+      </div>
+      <div className="growth-period-switch" role="tablist" aria-label="그래프 기간">
+        {Object.entries(growthData).map(([id, item]) => (
+          <button type="button" className={period === id ? 'is-active' : ''} role="tab" aria-selected={period === id} key={id} onClick={() => setPeriod(id)}>{item.label}</button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function PersonalAvatar({ profile, className = 'avatar' }) {
   return (
     <div className={className} aria-hidden="true">
@@ -3161,9 +3360,10 @@ function PersonalAvatar({ profile, className = 'avatar' }) {
   );
 }
 
-function SelfProfileEditor({ profile, onClose, onSave }) {
+function SelfProfileEditor({ profile, selectedTranslation, onClose, onSave }) {
   const [draft, setDraft] = useState(profile);
   const [uploadError, setUploadError] = useState('');
+  const [versePickerOpen, setVersePickerOpen] = useState(false);
 
   const loadProfileImage = (event) => {
     const file = event.target.files?.[0];
@@ -3180,8 +3380,7 @@ function SelfProfileEditor({ profile, onClose, onSave }) {
     reader.readAsDataURL(file);
   };
 
-  const saveProfile = (event) => {
-    event.preventDefault();
+  const saveProfile = () => {
     const verseRef = draft.verseRef.trim();
     const representativeVerse = draft.representativeVerse.trim();
     if (!verseRef || !representativeVerse) return;
@@ -3191,7 +3390,7 @@ function SelfProfileEditor({ profile, onClose, onSave }) {
   return (
     <div className="self-profile-editor-layer">
       <button className="self-profile-editor-backdrop" type="button" aria-label="프로필 편집 닫기" onClick={onClose} />
-      <form className="self-profile-editor" aria-label="내 프로필 편집" onSubmit={saveProfile}>
+      <section className="self-profile-editor" aria-label="내 프로필 편집">
         <header><h2>프로필 편집</h2><button type="button" aria-label="프로필 편집 닫기" onClick={onClose}><X size={21} /></button></header>
 
         <div className="self-profile-photo">
@@ -3205,12 +3404,177 @@ function SelfProfileEditor({ profile, onClose, onSave }) {
         </div>
 
         <div className="self-profile-fields">
-          <label><span>대표 말씀</span><input value={draft.verseRef} onChange={(event) => setDraft((current) => ({ ...current, verseRef: event.target.value }))} placeholder="예: 빌립보서 4:13" /></label>
-          <label><span>말씀 내용</span><textarea value={draft.representativeVerse} onChange={(event) => setDraft((current) => ({ ...current, representativeVerse: event.target.value }))} placeholder="대표 말씀을 입력해 주세요" /></label>
+          <span className="self-profile-field-label">대표 말씀</span>
+          <button className="representative-verse-trigger" type="button" onClick={() => setVersePickerOpen(true)}>
+            <span><BookOpen size={18} aria-hidden="true" /></span>
+            <span><strong>{draft.verseRef}</strong><small>{draft.representativeVerse}</small></span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
         </div>
 
-        <button className="self-profile-save" type="submit" disabled={!draft.verseRef.trim() || !draft.representativeVerse.trim()}>저장하기</button>
-      </form>
+        <button className="self-profile-save" type="button" onClick={saveProfile} disabled={!draft.verseRef.trim() || !draft.representativeVerse.trim()}>저장하기</button>
+      </section>
+
+      {versePickerOpen && (
+        <RepresentativeVersePicker
+          currentProfile={draft}
+          selectedTranslation={selectedTranslation}
+          onClose={() => setVersePickerOpen(false)}
+          onSelect={(verse) => {
+            setDraft((current) => ({
+              ...current,
+              verseRef: verse.reference,
+              representativeVerse: verse.text,
+            }));
+            setVersePickerOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function RepresentativeVersePicker({ currentProfile, selectedTranslation, onClose, onSelect }) {
+  const initialBook = bibleBooks.find((book) => currentProfile.verseRef.startsWith(book.name)) ?? bibleBooks.find(({ id }) => id === 'philippians');
+  const referenceNumbers = currentProfile.verseRef.match(/(\d+)\s*:\s*(\d+)/);
+  const [mode, setMode] = useState('browse');
+  const [step, setStep] = useState('book');
+  const [testament, setTestament] = useState(initialBook.testament);
+  const [draftBookId, setDraftBookId] = useState(initialBook.id);
+  const [draftChapter, setDraftChapter] = useState(Number(referenceNumbers?.[1] ?? 1));
+  const [draftVerse, setDraftVerse] = useState(Number(referenceNumbers?.[2] ?? 1));
+  const [chapterVerses, setChapterVerses] = useState([]);
+  const [chapterLoading, setChapterLoading] = useState(false);
+  const [query, setQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const draftBook = bibleBooks.find(({ id }) => id === draftBookId) ?? initialBook;
+  const visibleBooks = bibleBooks.filter((book) => book.testament === testament);
+
+  useEffect(() => {
+    if (step !== 'verse') return undefined;
+    let active = true;
+    setChapterLoading(true);
+    loadBibleChapter(selectedTranslation, draftBook.id, draftChapter)
+      .then((verses) => {
+        if (!active) return;
+        setChapterVerses(verses);
+        setDraftVerse((current) => Math.min(Math.max(current, 1), verses.length));
+        setChapterLoading(false);
+      })
+      .catch(() => {
+        if (!active) return;
+        setChapterVerses([]);
+        setChapterLoading(false);
+      });
+    return () => { active = false; };
+  }, [draftBook.id, draftChapter, selectedTranslation, step]);
+
+  const updateBook = (bookId) => {
+    const nextBook = bibleBooks.find(({ id }) => id === bookId) ?? bibleBooks[0];
+    setDraftBookId(nextBook.id);
+    setDraftChapter((current) => Math.min(current, nextBook.chapters));
+    setDraftVerse(1);
+  };
+
+  const changeTestament = (nextTestament) => {
+    setTestament(nextTestament);
+    if (draftBook.testament === nextTestament) return;
+    const firstBook = bibleBooks.find(({ testament: bookTestament }) => bookTestament === nextTestament);
+    if (firstBook) updateBook(firstBook.id);
+  };
+
+  const moveToNextBrowseStep = () => {
+    if (step === 'book') setStep('chapter');
+    else if (step === 'chapter') setStep('verse');
+    else {
+      const selectedVerse = chapterVerses.find(({ verse }) => verse === draftVerse);
+      if (selectedVerse) onSelect({ reference: `${draftBook.name} ${draftChapter}:${selectedVerse.verse}`, text: selectedVerse.text });
+    }
+  };
+
+  const goBackBrowseStep = () => {
+    if (step === 'verse') setStep('chapter');
+    else if (step === 'chapter') setStep('book');
+  };
+
+  const searchVerses = async (event) => {
+    event.preventDefault();
+    if (!query.trim()) return;
+    setSearching(true);
+    const results = await searchBibleVerses(selectedTranslation, query, 40);
+    setSearchResults(results);
+    setSearching(false);
+  };
+
+  const wheelItems = step === 'book'
+    ? visibleBooks.map((book) => ({ value: book.id, label: book.name, meta: `${book.chapters}장` }))
+    : step === 'chapter'
+      ? Array.from({ length: draftBook.chapters }, (_, index) => ({ value: index + 1, label: `${index + 1}장` }))
+      : chapterVerses.map((verse) => ({ value: verse.verse, label: `${verse.verse}절`, meta: verse.text }));
+  const wheelValue = step === 'book' ? draftBook.id : step === 'chapter' ? draftChapter : draftVerse;
+  const translationLabel = translations.find(({ id }) => id === selectedTranslation)?.label;
+
+  return (
+    <div className="representative-verse-picker-layer">
+      <button className="representative-verse-picker-backdrop" type="button" aria-label="대표 말씀 선택 닫기" onClick={onClose} />
+      <section className="representative-verse-picker" role="dialog" aria-modal="true" aria-labelledby="representative-verse-picker-title">
+        <header>
+          <div>
+            {mode === 'browse' && step !== 'book' && <button type="button" aria-label="이전 단계" onClick={goBackBrowseStep}><ChevronLeft size={22} /></button>}
+            <div><h2 id="representative-verse-picker-title">대표 말씀 선택</h2><p>{selectedTranslation} · {translationLabel}</p></div>
+          </div>
+          <button type="button" aria-label="대표 말씀 선택 닫기" onClick={onClose}><X size={21} /></button>
+        </header>
+
+        <div className="verse-picker-mode" role="tablist" aria-label="대표 말씀 탐색 방법">
+          <button type="button" className={mode === 'browse' ? 'is-active' : ''} role="tab" aria-selected={mode === 'browse'} onClick={() => setMode('browse')}>성경에서 찾기</button>
+          <button type="button" className={mode === 'search' ? 'is-active' : ''} role="tab" aria-selected={mode === 'search'} onClick={() => setMode('search')}>키워드 검색</button>
+        </div>
+
+        {mode === 'browse' ? (
+          <div className={`representative-verse-browse ${step === 'verse' ? 'is-verse-step' : ''}`}>
+            {step === 'book' && (
+              <div className="picker-testament-tabs" role="tablist" aria-label="성경 구분">
+                {['구약', '신약'].map((item) => (
+                  <button className={testament === item ? 'is-active' : ''} type="button" role="tab" aria-selected={testament === item} key={item} onClick={() => changeTestament(item)}>{item}</button>
+                ))}
+              </div>
+            )}
+            <div className="representative-verse-step"><span>{step === 'book' ? '성경' : step === 'chapter' ? draftBook.name : `${draftBook.name} ${draftChapter}장`}</span><b>{step === 'book' ? '1' : step === 'chapter' ? '2' : '3'} / 3</b></div>
+            {chapterLoading ? <p className="verse-picker-status">말씀을 불러오고 있어요.</p> : (
+              <PickerWheel
+                items={wheelItems}
+                value={wheelValue}
+                label={`대표 말씀 ${step} Wheel 선택`}
+                onChange={(value) => {
+                  if (step === 'book') updateBook(value);
+                  else if (step === 'chapter') setDraftChapter(Number(value));
+                  else setDraftVerse(Number(value));
+                }}
+              />
+            )}
+            <button className="picker-confirm-button" type="button" disabled={chapterLoading || wheelItems.length === 0} onClick={moveToNextBrowseStep}>
+              {step === 'verse' ? '이 말씀 선택' : '다음'}
+            </button>
+          </div>
+        ) : (
+          <div className="representative-verse-search">
+            <form onSubmit={searchVerses}>
+              <label><Search size={18} aria-hidden="true" /><input aria-label="말씀 키워드 검색" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="평안, 사랑, 두려움..." />{query && <button type="button" aria-label="검색어 지우기" onClick={() => { setQuery(''); setSearchResults([]); }}><X size={16} /></button>}</label>
+              <button type="submit" disabled={!query.trim() || searching}>{searching ? '검색 중' : '검색'}</button>
+            </form>
+            <div className="representative-verse-results">
+              {searchResults.map((verse) => (
+                <button type="button" key={`${verse.bookId}-${verse.chapter}-${verse.verse}`} onClick={() => onSelect(verse)}>
+                  <strong>{verse.reference}</strong><p><HighlightedMessage text={verse.text} query={query.trim().toLowerCase()} /></p>
+                </button>
+              ))}
+              {!searching && query.trim() && searchResults.length === 0 && <p className="verse-picker-status">검색 결과가 없어요.</p>}
+            </div>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
