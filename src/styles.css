@@ -315,6 +315,12 @@ button[class*="backdrop"]:active,
   z-index: 25;
 }
 
+.workspace:has(.representative-verse-picker-layer),
+.workspace:has(.qt-room-screen) {
+  overflow: visible;
+  z-index: 25;
+}
+
 .topbar {
   align-items: center;
   display: flex;
@@ -6165,4 +6171,757 @@ button.list-row:active,
   .quick-action strong {
     font-size: 11px;
   }
+}
+
+/* Bible selection and long-press actions */
+.reader-selection-controls {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+}
+
+.reader-selection-controls button {
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 790;
+  min-height: 32px;
+  padding: 0 8px;
+}
+
+.reader-selection-controls button.is-confirm {
+  color: var(--accent-deep);
+}
+
+.reader-selection-controls button:disabled {
+  color: var(--muted-light);
+}
+
+.verse-wrap.is-multi-mode .verse-row {
+  padding-right: 30px;
+  position: relative;
+}
+
+.verse-wrap.is-multi-selected {
+  background: rgb(75 66 152 / 7%);
+  margin: 0 -9px;
+  padding: 0 9px;
+}
+
+.verse-select-check {
+  align-items: center;
+  border: 1px solid #cbd0d7;
+  border-radius: 50%;
+  color: #fff;
+  display: inline-flex;
+  height: 20px;
+  justify-content: center;
+  position: absolute;
+  right: 1px;
+  top: 6px;
+  width: 20px;
+}
+
+.verse-select-check.is-selected {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+}
+
+.verse-wrap.is-press-pulsing .verse-copy {
+  animation: verse-press-pulse 300ms cubic-bezier(0.2, 0.78, 0.2, 1);
+  transform-origin: left center;
+}
+
+@keyframes verse-press-pulse {
+  0% { transform: scale(1); }
+  42% { transform: scale(1.045); }
+  72% { transform: scale(0.99); }
+  100% { transform: scale(1); }
+}
+
+.verse-actions {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 2px 0 10px 35px;
+}
+
+.verse-actions > span {
+  grid-column: 1 / -1;
+  margin-right: 0;
+}
+
+.verse-actions > button {
+  justify-content: center;
+  min-width: 0;
+  padding: 0 4px;
+}
+
+.verse-multi-action-layer {
+  bottom: 80px;
+  left: 50%;
+  max-width: 480px;
+  min-width: 320px;
+  position: fixed;
+  top: 0;
+  transform: translateX(-50%);
+  width: 100%;
+  z-index: 85;
+}
+
+.verse-multi-action-backdrop {
+  background: rgb(0 0 0 / 24%);
+  border: 0;
+  inset: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.verse-multi-action-sheet {
+  animation: memo-sheet-rise 190ms ease-out;
+  background: var(--surface);
+  border-radius: 5px 5px 0 0;
+  bottom: 0;
+  box-shadow: 0 -10px 30px rgb(25 31 40 / 13%);
+  left: 0;
+  padding: 16px 16px max(16px, env(safe-area-inset-bottom));
+  position: absolute;
+  right: 0;
+}
+
+.verse-multi-action-sheet > header {
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.verse-multi-action-sheet h2 {
+  font-size: 17px;
+  margin: 0 0 4px;
+}
+
+.verse-multi-action-sheet p {
+  color: var(--muted);
+  display: -webkit-box;
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.verse-multi-action-sheet > header > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.verse-multi-action-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.verse-multi-action-grid button {
+  align-items: center;
+  background: var(--surface-muted);
+  border: 0;
+  border-radius: 5px;
+  color: var(--ink-soft);
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  font-weight: 760;
+  gap: 7px;
+  min-height: 72px;
+}
+
+.verse-multi-action-grid button svg {
+  color: var(--accent-deep);
+}
+
+.bible-action-notice {
+  background: rgb(25 31 40 / 92%);
+  border-radius: 4px;
+  bottom: 104px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 720;
+  left: 50%;
+  padding: 10px 14px;
+  position: fixed;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  z-index: 100;
+}
+
+/* Church actions and QT flow */
+.church-action-card {
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.church-action-card > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  display: flex;
+  justify-content: space-between;
+  min-height: 68px;
+  padding: 10px 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.church-action-card > button + button {
+  border-top: 1px solid var(--divider);
+}
+
+.church-action-card > button > span {
+  display: grid;
+  gap: 3px;
+}
+
+.church-action-card strong {
+  font-size: 15px;
+  font-weight: 820;
+}
+
+.church-action-card small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.church-action-card svg {
+  color: var(--muted-light);
+}
+
+.church-ready-layer,
+.qt-creation-layer {
+  bottom: 80px;
+  left: 50%;
+  max-width: 480px;
+  min-width: 320px;
+  position: fixed;
+  top: 0;
+  transform: translateX(-50%);
+  width: 100%;
+  z-index: 82;
+}
+
+.church-ready-layer > button,
+.qt-creation-backdrop {
+  background: rgb(0 0 0 / 24%);
+  border: 0;
+  inset: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.church-ready-layer > section {
+  background: var(--surface);
+  border-radius: 7px;
+  left: 50%;
+  padding: 22px 20px 18px;
+  position: absolute;
+  text-align: center;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(310px, calc(100% - 40px));
+}
+
+.church-ready-layer > section > svg {
+  color: var(--accent-deep);
+}
+
+.church-ready-layer h2 {
+  font-size: 18px;
+  margin: 10px 0 5px;
+}
+
+.church-ready-layer p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 0 0 17px;
+}
+
+.church-ready-layer section button {
+  background: var(--accent-deep);
+  border: 0;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 780;
+  min-height: 42px;
+  width: 100%;
+}
+
+.qt-creation-sheet {
+  animation: member-profile-rise 220ms ease-out;
+  background: var(--surface);
+  border-top: 1px solid var(--divider);
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  left: 0;
+  max-height: 88dvh;
+  min-height: 540px;
+  position: absolute;
+  right: 0;
+}
+
+.qt-creation-sheet > header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  min-height: 74px;
+  padding: 12px 16px 8px;
+}
+
+.qt-creation-sheet > header h2 {
+  font-size: 17px;
+  margin: 0 0 3px;
+}
+
+.qt-creation-sheet > header p {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 0;
+}
+
+.qt-creation-sheet > header button,
+.qt-member-search button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  display: inline-flex;
+  height: 38px;
+  justify-content: center;
+  width: 38px;
+}
+
+.qt-source-switch {
+  background: var(--surface-muted);
+  display: grid;
+  gap: 4px;
+  grid-template-columns: 1fr 1fr;
+  margin: 0 16px 10px;
+  padding: 3px;
+}
+
+.qt-source-switch button {
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 730;
+  min-height: 36px;
+}
+
+.qt-source-switch button.is-active {
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgb(25 31 40 / 8%);
+  color: var(--accent-deep);
+}
+
+.qt-selected-members {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 4px 16px 10px;
+}
+
+.qt-selected-members article {
+  align-items: center;
+  display: grid;
+  flex: 0 0 54px;
+  gap: 4px;
+  justify-items: center;
+  position: relative;
+  user-select: none;
+}
+
+.qt-selected-members .directory-avatar {
+  height: 44px;
+  width: 44px;
+}
+
+.qt-selected-members strong {
+  font-size: 10px;
+  max-width: 54px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qt-selected-members article > button {
+  align-items: center;
+  background: var(--ink-soft);
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  color: #fff;
+  display: inline-flex;
+  height: 19px;
+  justify-content: center;
+  padding: 0;
+  position: absolute;
+  right: 1px;
+  top: -2px;
+  width: 19px;
+}
+
+.qt-member-search {
+  align-items: center;
+  background: var(--surface-muted);
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  color: var(--muted);
+  display: grid;
+  gap: 7px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  margin: 0 16px 10px;
+  min-height: 44px;
+  padding: 0 10px;
+}
+
+.qt-member-search input {
+  background: transparent;
+  border: 0;
+  min-width: 0;
+  outline: 0;
+  width: 100%;
+}
+
+.qt-member-search button {
+  height: 30px;
+  width: 30px;
+}
+
+.qt-member-list {
+  border-top: 1px solid var(--divider);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.qt-member-list > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--divider);
+  color: var(--ink);
+  display: grid;
+  gap: 11px;
+  grid-template-columns: 44px minmax(0, 1fr) 26px;
+  min-height: 66px;
+  padding: 9px 16px;
+  text-align: left;
+  width: 100%;
+}
+
+.qt-member-list > button.is-selected {
+  background: rgb(75 66 152 / 5%);
+}
+
+.qt-member-list .directory-avatar {
+  height: 44px;
+  width: 44px;
+}
+
+.qt-member-list > button > span:nth-child(2) {
+  display: grid;
+  gap: 2px;
+}
+
+.qt-member-list strong {
+  font-size: 14px;
+}
+
+.qt-member-list small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.qt-member-list i {
+  align-items: center;
+  border: 1px solid var(--divider);
+  border-radius: 50%;
+  color: #fff;
+  display: inline-flex;
+  height: 24px;
+  justify-content: center;
+  width: 24px;
+}
+
+.qt-member-list .is-selected i {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+}
+
+.qt-member-list > p {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 34px 16px;
+  text-align: center;
+}
+
+.qt-creation-sheet > footer {
+  align-items: center;
+  border-top: 1px solid var(--divider);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto 1fr;
+  padding: 10px 16px max(12px, env(safe-area-inset-bottom));
+}
+
+.qt-creation-sheet > footer span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.qt-creation-sheet > footer button {
+  background: var(--accent-deep);
+  border: 0;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 790;
+  min-height: 44px;
+}
+
+.qt-creation-sheet > footer button:disabled {
+  background: var(--surface-pressed);
+  color: var(--muted-light);
+  opacity: 1;
+}
+
+.qt-creation-layer .member-profile-layer {
+  bottom: 0;
+}
+
+/* QT directory and room */
+.qt-room-list > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  display: grid;
+  gap: 11px;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  min-height: 78px;
+  padding: 10px 16px;
+  text-align: left;
+  width: 100%;
+}
+
+.qt-room-list-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.qt-room-list-copy > span {
+  align-items: baseline;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.qt-room-list-copy strong {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qt-room-list-copy small,
+.qt-room-list-copy p {
+  color: var(--muted);
+  font-size: 10px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qt-room-list-copy cite {
+  color: var(--accent-deep);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 760;
+}
+
+.qt-room-screen {
+  background: var(--surface-muted);
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  left: 50%;
+  max-width: 480px;
+  min-width: 320px;
+  position: fixed;
+  top: 0;
+  transform: translateX(-50%);
+  width: 100%;
+  z-index: 90;
+}
+
+.qt-room-screen > header {
+  align-items: center;
+  background: var(--surface);
+  display: grid;
+  gap: 7px;
+  grid-template-columns: 40px minmax(0, 1fr);
+  min-height: 64px;
+  padding: max(7px, env(safe-area-inset-top)) 12px 7px;
+}
+
+.qt-room-screen > header > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  display: inline-flex;
+  height: 40px;
+  justify-content: center;
+  width: 40px;
+}
+
+.qt-room-screen > header h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.qt-room-screen > header p {
+  color: var(--muted);
+  font-size: 10px;
+  margin: 2px 0 0;
+}
+
+.qt-room-screen > blockquote {
+  background: var(--surface);
+  border: 0;
+  border-top: 1px solid var(--divider);
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 15px 18px;
+}
+
+.qt-room-screen > blockquote svg,
+.qt-room-screen > blockquote cite {
+  color: var(--accent-deep);
+}
+
+.qt-room-screen > blockquote p {
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.qt-room-screen > blockquote cite {
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 780;
+}
+
+.qt-room-messages {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.qt-room-messages article {
+  align-self: flex-start;
+  max-width: 82%;
+}
+
+.qt-room-messages article.is-me {
+  align-self: flex-end;
+}
+
+.qt-room-messages article strong,
+.qt-room-messages article time {
+  color: var(--muted);
+  display: block;
+  font-size: 9px;
+  margin: 0 3px 3px;
+}
+
+.qt-room-messages article p {
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  border-radius: 5px;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0 0 3px;
+  padding: 9px 11px;
+}
+
+.qt-room-messages article.is-me p {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  color: #fff;
+}
+
+.qt-room-messages article.is-me time {
+  text-align: right;
+}
+
+.qt-room-empty {
+  color: var(--muted);
+  font-size: 12px;
+  margin: auto;
+  text-align: center;
+}
+
+.qt-room-screen > form {
+  align-items: end;
+  background: var(--surface);
+  border-top: 1px solid var(--divider);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 40px;
+  padding: 8px 10px max(8px, env(safe-area-inset-bottom));
+}
+
+.qt-room-screen > form textarea {
+  background: var(--surface-muted);
+  border: 1px solid var(--divider);
+  border-radius: 7px;
+  max-height: 110px;
+  min-height: 42px;
+  outline: 0;
+  padding: 10px 12px;
+  resize: none;
+  width: 100%;
+}
+
+.qt-room-screen > form button {
+  align-items: center;
+  background: var(--accent-deep);
+  border: 0;
+  border-radius: 7px;
+  color: #fff;
+  display: inline-flex;
+  height: 40px;
+  justify-content: center;
+  width: 40px;
 }

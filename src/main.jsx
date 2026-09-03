@@ -277,6 +277,24 @@ const initialChurchConversations = [
   },
 ];
 
+const initialQtRooms = [
+  {
+    id: 'qt-peace-together',
+    name: '평안을 나누는 QT',
+    participantIds: ['minseo', 'harin'],
+    verse: {
+      reference: '빌립보서 4:6',
+      text: '아무 것도 염려하지 말고 다만 모든 일에 기도와 간구로, 너희 구할 것을 감사함으로 하나님께 아뢰라.',
+    },
+    messages: [
+      { id: 'qt-message-1', from: 'minseo', author: '김민서', text: '오늘은 염려를 기도로 바꾸어 보는 하루를 나눠요.', time: '어제 오후 9:10' },
+    ],
+    time: '어제',
+    unread: 1,
+    createdAt: Date.now() - 24 * 60 * 60 * 1000,
+  },
+];
+
 const churchDirectoryMembers = [
   {
     id: 'harin',
@@ -613,6 +631,7 @@ function App() {
   const [newPost, setNewPost] = useState('');
   const [posts, setPosts] = useState(communityPosts);
   const [conversations, setConversations] = useState(initialChurchConversations);
+  const [qtRooms, setQtRooms] = useState(() => readStoredValue('bibleon.qtRooms', initialQtRooms));
   const [isHomeChatOpen, setIsHomeChatOpen] = useState(false);
   const [homeChatHistoryOpen, setHomeChatHistoryOpen] = useState(false);
   const [messageFriendsMenuOpen, setMessageFriendsMenuOpen] = useState(false);
@@ -736,6 +755,10 @@ function App() {
   useEffect(() => {
     writeStoredValue('bibleon.personalProfile', personalProfile);
   }, [personalProfile]);
+
+  useEffect(() => {
+    writeStoredValue('bibleon.qtRooms', qtRooms);
+  }, [qtRooms]);
 
   useEffect(() => {
     writeStoredValue(HOME_CHAT_STORAGE_KEY, homeChatRooms);
@@ -906,12 +929,18 @@ function App() {
             setNewPost={setNewPost}
             addQtPost={addQtPost}
             selectedRef={selectedRef}
+            selectedTranslation={selectedTranslation}
+            conversations={conversations}
+            qtRooms={qtRooms}
+            setQtRooms={setQtRooms}
           />
         )}
         {activeTab === 'messages' && (
           <MessageView
             conversations={conversations}
             setConversations={setConversations}
+            qtRooms={qtRooms}
+            setQtRooms={setQtRooms}
             friendsMenuOpen={messageFriendsMenuOpen}
             onCloseFriendsMenu={() => setMessageFriendsMenuOpen(false)}
           />
@@ -1976,6 +2005,11 @@ function BibleView({
   setLastHighlightStyle,
 }) {
   const [selectedVerse, setSelectedVerse] = useState(null);
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
+  const [selectedVerseIds, setSelectedVerseIds] = useState([]);
+  const [multiActionSheetOpen, setMultiActionSheetOpen] = useState(false);
+  const [pressPulseVerseId, setPressPulseVerseId] = useState('');
+  const [actionNotice, setActionNotice] = useState('');
   const [highlightPickerVerseId, setHighlightPickerVerseId] = useState('');
   const [highlightDraft, setHighlightDraft] = useState(lastHighlightStyle);
   const [chapterState, setChapterState] = useState({ status: 'loading', verses: [] });
@@ -1989,12 +2023,16 @@ function BibleView({
   const longPressTimerRef = useRef(null);
   const pressGestureRef = useRef(null);
   const swipeGestureRef = useRef(null);
+  const lastTapRef = useRef({ verseId: '', timestamp: 0 });
   const suppressClickRef = useRef(false);
   const suppressClickTimerRef = useRef(null);
 
   useEffect(() => {
     let isCurrent = true;
     setSelectedVerse(null);
+    setIsMultiSelectMode(false);
+    setSelectedVerseIds([]);
+    setMultiActionSheetOpen(false);
     setHighlightPickerVerseId('');
     setNoteSheet(null);
 
@@ -2054,6 +2092,9 @@ function BibleView({
     setSelectedBookId(bookId);
     setSelectedChapter(Math.min(nextBook.chapters, Math.max(1, chapter)));
     setSelectedVerse(null);
+    setIsMultiSelectMode(false);
+    setSelectedVerseIds([]);
+    setMultiActionSheetOpen(false);
     setHighlightPickerVerseId('');
     setNoteSheet(null);
   };
@@ -2062,13 +2103,20 @@ function BibleView({
     const nextChapter = Math.min(selectedBook.chapters, Math.max(1, selectedChapter + direction));
     if (nextChapter === selectedChapter) return;
     setSelectedVerse(null);
+    setIsMultiSelectMode(false);
+    setSelectedVerseIds([]);
+    setMultiActionSheetOpen(false);
     setHighlightPickerVerseId('');
     setNoteSheet(null);
     setSelectedChapter(nextChapter);
   };
 
   const markRead = (verseId) => {
-    setReadVerseIds((current) => current.includes(verseId) ? current : [...current, verseId]);
+    setReadVerseIds((current) => (
+      current.includes(verseId)
+        ? current.filter((id) => id !== verseId)
+        : [...current, verseId]
+    ));
   };
 
   const openHighlightPicker = (verseId) => {
@@ -2120,6 +2168,42 @@ function BibleView({
     setNoteSheet({ mode: 'edit', verse });
   };
 
+  const showActionNotice = (message) => {
+    setActionNotice(message);
+    window.setTimeout(() => setActionNotice(''), 1800);
+  };
+
+  const shareVerses = async (verses) => {
+    const text = verses.map((verse) => `${verse.ref} ${verse.text}`).join('\n');
+    try {
+      if (navigator.share) await navigator.share({ title: '바이블온 말씀', text });
+      else {
+        await navigator.clipboard.writeText(text);
+        showActionNotice('선택한 말씀을 복사했어요.');
+      }
+    } catch (error) {
+      if (error?.name !== 'AbortError') showActionNotice('말씀을 전달하지 못했어요.');
+    }
+  };
+
+  const openVerseAnalysis = () => {
+    showActionNotice('말씀 분석 기능을 준비하고 있어요.');
+  };
+
+  const toggleMultiVerse = (verseId) => {
+    setSelectedVerseIds((current) => (
+      current.includes(verseId)
+        ? current.filter((id) => id !== verseId)
+        : [...current, verseId]
+    ));
+  };
+
+  const closeMultiSelect = () => {
+    setIsMultiSelectMode(false);
+    setSelectedVerseIds([]);
+    setMultiActionSheetOpen(false);
+  };
+
   const updateNote = (verseId, value) => {
     setNoteDraft(value);
     setVerseNotes((current) => {
@@ -2144,8 +2228,18 @@ function BibleView({
       if (!pressGestureRef.current || pressGestureRef.current.moved) return;
       pressGestureRef.current.longPressed = true;
       suppressUpcomingClick();
-      markRead(verse.id);
+      setPressPulseVerseId(verse.id);
+      window.setTimeout(() => setPressPulseVerseId((current) => current === verse.id ? '' : current), 300);
       setSelectedRef(verse.ref);
+      window.setTimeout(() => {
+        if (isMultiSelectMode) {
+          setSelectedVerseIds((current) => current.includes(verse.id) ? current : [...current, verse.id]);
+          setMultiActionSheetOpen(true);
+          return;
+        }
+        setHighlightPickerVerseId('');
+        setSelectedVerse((current) => current === verse.id ? null : verse.id);
+      }, 220);
     }, 500);
   };
 
@@ -2165,9 +2259,19 @@ function BibleView({
       suppressClickRef.current = false;
       return;
     }
-    setHighlightPickerVerseId('');
-    setSelectedVerse((current) => current === verse.id ? null : verse.id);
     setSelectedRef(verse.ref);
+    if (isMultiSelectMode) {
+      toggleMultiVerse(verse.id);
+      return;
+    }
+
+    const now = Date.now();
+    const isDoubleTap = lastTapRef.current.verseId === verse.id
+      && now - lastTapRef.current.timestamp <= 320;
+    lastTapRef.current = isDoubleTap
+      ? { verseId: '', timestamp: 0 }
+      : { verseId: verse.id, timestamp: now };
+    if (isDoubleTap) markRead(verse.id);
   };
 
   const handleReaderPointerDown = (event) => {
@@ -2293,9 +2397,32 @@ function BibleView({
             <h2>{selectedBook.name} {selectedChapter}장</h2>
           </div>
           <div className="reader-header-side">
-            <button className="icon-button small" type="button" aria-label="본문 메뉴" title="본문 메뉴">
-              <MoreHorizontal size={20} aria-hidden="true" />
-            </button>
+            <div className="reader-selection-controls">
+              {isMultiSelectMode ? (
+                <>
+                  <button type="button" onClick={closeMultiSelect}>취소</button>
+                  <button
+                    className="is-confirm"
+                    type="button"
+                    disabled={selectedVerseIds.length === 0}
+                    onClick={() => setMultiActionSheetOpen(true)}
+                  >
+                    확인{selectedVerseIds.length ? ` ${selectedVerseIds.length}` : ''}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedVerse(null);
+                    setHighlightPickerVerseId('');
+                    setIsMultiSelectMode(true);
+                  }}
+                >
+                  선택
+                </button>
+              )}
+            </div>
             <div className="reader-progress" aria-label={`${chapterProgress}% 읽음`}>
               <ProgressBar value={chapterProgress} />
               <span>{chapterProgress}%</span>
@@ -2323,6 +2450,7 @@ function BibleView({
           {activeVerses.map((verse) => {
             const isRead = readVerseIds.includes(verse.id);
             const isSelected = selectedVerse === verse.id;
+            const isMultiSelected = selectedVerseIds.includes(verse.id);
             const hasNote = Boolean(verseNotes[verse.id]?.trim());
             const highlight = verseHighlights[verse.id];
             const isHighlighted = Boolean(highlight);
@@ -2333,11 +2461,11 @@ function BibleView({
                     {heading.text}
                   </h3>
                 ))}
-                <div className={`verse-wrap ${isSelected ? 'is-selected' : ''}`}>
+                <div className={`verse-wrap ${isSelected ? 'is-selected' : ''} ${isMultiSelectMode ? 'is-multi-mode' : ''} ${isMultiSelected ? 'is-multi-selected' : ''} ${pressPulseVerseId === verse.id ? 'is-press-pulsing' : ''}`}>
                   <button
                     className="verse-row"
                     type="button"
-                    title="0.5초 이상 누르면 읽음으로 표시됩니다"
+                    title={isMultiSelectMode ? '탭하여 절 선택' : '두 번 탭하여 읽음 표시, 길게 눌러 옵션 열기'}
                     onContextMenu={(event) => event.preventDefault()}
                     onPointerDown={(event) => handleVersePointerDown(event, verse)}
                     onPointerUp={(event) => handleVersePointerUp(event, verse)}
@@ -2354,6 +2482,11 @@ function BibleView({
                     <span className="verse-copy">
                       <VerseHighlightedText text={verse.text} highlight={highlight} />
                     </span>
+                    {isMultiSelectMode && (
+                      <span className={`verse-select-check ${isMultiSelected ? 'is-selected' : ''}`} aria-hidden="true">
+                        {isMultiSelected && <Check size={13} strokeWidth={3} />}
+                      </span>
+                    )}
                   </button>
                   {isSelected && (
                     <div className="verse-actions" aria-label={`${verse.ref} 동작`}>
@@ -2363,6 +2496,12 @@ function BibleView({
                       </button>
                       <button className={isHighlighted ? 'is-on' : ''} type="button" onClick={() => handleHighlightButton(verse.id)}>
                         <Highlighter size={16} aria-hidden="true" />{isHighlighted ? '강조 해제' : '강조'}
+                      </button>
+                      <button type="button" onClick={() => shareVerses([verse])}>
+                        <Send size={16} aria-hidden="true" />전달
+                      </button>
+                      <button type="button" onClick={openVerseAnalysis}>
+                        <Search size={16} aria-hidden="true" />분석
                       </button>
                       {highlightPickerVerseId === verse.id && (
                         <div className="highlight-popover" role="dialog" aria-label={`${verse.ref} 강조 설정`}>
@@ -2430,6 +2569,46 @@ function BibleView({
           </span>
         </div>
       </article>
+
+      {multiActionSheetOpen && (
+        <div className="verse-multi-action-layer">
+          <button className="verse-multi-action-backdrop" type="button" aria-label="선택한 절 옵션 닫기" onClick={() => setMultiActionSheetOpen(false)} />
+          <section className="verse-multi-action-sheet" role="dialog" aria-modal="true" aria-labelledby="verse-multi-action-title">
+            <header>
+              <div><h2 id="verse-multi-action-title">{selectedVerseIds.length}개 절 선택</h2><p>{activeVerses.filter(({ id }) => selectedVerseIds.includes(id)).map(({ ref }) => ref).join(', ')}</p></div>
+              <button type="button" aria-label="선택한 절 옵션 닫기" onClick={() => setMultiActionSheetOpen(false)}><X size={20} /></button>
+            </header>
+            <div className="verse-multi-action-grid">
+              <button type="button" onClick={() => {
+                const firstVerse = activeVerses.find(({ id }) => selectedVerseIds.includes(id));
+                setMultiActionSheetOpen(false);
+                if (firstVerse) openNoteEditor(firstVerse);
+              }}><NotebookPen size={21} /><span>메모</span></button>
+              <button type="button" onClick={() => {
+                const selectedIds = new Set(selectedVerseIds);
+                setVerseHighlights((current) => {
+                  const next = { ...current };
+                  const allHighlighted = selectedVerseIds.every((id) => Boolean(current[id]));
+                  selectedIds.forEach((id) => {
+                    if (allHighlighted) delete next[id];
+                    else next[id] = normalizeHighlightStyle(lastHighlightStyle);
+                  });
+                  return next;
+                });
+                setMultiActionSheetOpen(false);
+              }}><Highlighter size={21} /><span>강조</span></button>
+              <button type="button" onClick={() => {
+                const selectedIds = new Set(selectedVerseIds);
+                shareVerses(activeVerses.filter(({ id }) => selectedIds.has(id)));
+                setMultiActionSheetOpen(false);
+              }}><Send size={21} /><span>전달</span></button>
+              <button type="button" onClick={() => { setMultiActionSheetOpen(false); openVerseAnalysis(); }}><Search size={21} /><span>분석</span></button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {actionNotice && <div className="bible-action-notice" role="status">{actionNotice}</div>}
 
       {isPassagePickerOpen && (
         <PassagePickerSheet
@@ -2499,7 +2678,28 @@ function BibleView({
   );
 }
 
-function ChurchView({ posts, newPost, setNewPost, addQtPost, selectedRef }) {
+function ChurchView({
+  posts,
+  newPost,
+  setNewPost,
+  addQtPost,
+  selectedRef,
+  selectedTranslation,
+  conversations,
+  qtRooms,
+  setQtRooms,
+}) {
+  const [communityNoticeOpen, setCommunityNoticeOpen] = useState(false);
+  const [qtCreatorOpen, setQtCreatorOpen] = useState(false);
+  const [activeQtRoomId, setActiveQtRoomId] = useState('');
+  const activeQtRoom = qtRooms.find(({ id }) => id === activeQtRoomId);
+
+  const createQtRoom = (room) => {
+    setQtRooms((current) => [room, ...current]);
+    setQtCreatorOpen(false);
+    setActiveQtRoomId(room.id);
+  };
+
   return (
     <div className="page-stack">
       <section className="church-summary">
@@ -2514,11 +2714,10 @@ function ChurchView({ posts, newPost, setNewPost, addQtPost, selectedRef }) {
         </div>
       </section>
 
-      <section className="quick-grid" aria-label="교회 바로가기">
-        <QuickAction icon={MessageCircle} label="커뮤니티" />
-        <QuickAction icon={PenLine} label="QT" />
-        <QuickAction icon={ClipboardList} label="예배 준비" />
-        <QuickAction icon={Users} label="부서" />
+      <section className="church-action-card" aria-label="교회 메뉴">
+        <button type="button" onClick={() => setCommunityNoticeOpen(true)}><span><strong>커뮤니티</strong><small>교회 구성원과 소식을 나눠요</small></span><ChevronRight size={18} /></button>
+        <button type="button" onClick={() => setQtCreatorOpen(true)}><span><strong>QT</strong><small>친구와 말씀을 묵상하고 나눠요</small></span><ChevronRight size={18} /></button>
+        <button type="button"><span><strong>부서</strong><small>{churchInfo.department} 구성원과 일정을 확인해요</small></span><ChevronRight size={18} /></button>
       </section>
 
       <Section title="이번 주 예배">
@@ -2560,7 +2759,172 @@ function ChurchView({ posts, newPost, setNewPost, addQtPost, selectedRef }) {
           {posts.map((post, index) => <PostCard post={post} key={`${post.author}-${post.time}-${index}`} />)}
         </div>
       </Section>
+
+      {communityNoticeOpen && (
+        <div className="church-ready-layer" role="presentation">
+          <button type="button" aria-label="안내 닫기" onClick={() => setCommunityNoticeOpen(false)} />
+          <section role="dialog" aria-modal="true" aria-labelledby="church-ready-title">
+            <MessageCircle size={24} aria-hidden="true" />
+            <h2 id="church-ready-title">출시 준비중</h2>
+            <p>교회 커뮤니티는 더 좋은 모습으로 준비하고 있어요.</p>
+            <button type="button" onClick={() => setCommunityNoticeOpen(false)}>확인</button>
+          </section>
+        </div>
+      )}
+
+      {qtCreatorOpen && (
+        <QtCreationFlow
+          conversations={conversations}
+          qtRooms={qtRooms}
+          selectedTranslation={selectedTranslation}
+          onClose={() => setQtCreatorOpen(false)}
+          onCreate={createQtRoom}
+        />
+      )}
+
+      {activeQtRoom && (
+        <QtRoomScreen
+          room={activeQtRoom}
+          setQtRooms={setQtRooms}
+          onBack={() => setActiveQtRoomId('')}
+        />
+      )}
     </div>
+  );
+}
+
+function QtCreationFlow({ conversations, qtRooms, selectedTranslation, onClose, onCreate }) {
+  const [step, setStep] = useState('members');
+  const [sourceMode, setSourceMode] = useState('recent');
+  const [query, setQuery] = useState('');
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [previewMember, setPreviewMember] = useState(null);
+  const profileHoldTimerRef = useRef(null);
+
+  const recentMemberIds = [...new Set(conversations.flatMap(getConversationParticipantIds))];
+  const recentQtMemberIds = [...new Set(qtRooms.flatMap(({ participantIds }) => participantIds))];
+  const sourceIds = sourceMode === 'recent' ? recentMemberIds : recentQtMemberIds;
+  const normalizedQuery = query.trim().toLowerCase();
+  const candidates = sourceIds
+    .map((id) => churchMessageMembers.find((member) => member.id === id))
+    .filter(Boolean)
+    .filter((member) => [member.name, member.department, member.role].some((value) => value.toLowerCase().includes(normalizedQuery)));
+  const selectedMembers = churchMessageMembers.filter(({ id }) => selectedIds.includes(id));
+
+  const cancelProfileHold = () => {
+    window.clearTimeout(profileHoldTimerRef.current);
+    profileHoldTimerRef.current = null;
+  };
+
+  const startProfileHold = (member) => {
+    cancelProfileHold();
+    profileHoldTimerRef.current = window.setTimeout(() => {
+      setPreviewMember(member);
+      profileHoldTimerRef.current = null;
+    }, 500);
+  };
+
+  useEffect(() => () => cancelProfileHold(), []);
+
+  const toggleMember = (memberId) => {
+    setSelectedIds((current) => current.includes(memberId)
+      ? current.filter((id) => id !== memberId)
+      : [...current, memberId]);
+  };
+
+  const changeSourceMode = (nextMode) => {
+    setSourceMode(nextMode);
+    setSelectedIds([]);
+    setQuery('');
+  };
+
+  const createRoomWithVerse = (verse) => {
+    const createdAt = Date.now();
+    const sortedMembers = [...selectedMembers].sort((first, second) => first.name.localeCompare(second.name, 'ko-KR'));
+    const firstName = sortedMembers[0]?.name ?? '새로운';
+    onCreate({
+      id: `qt-${createdAt}`,
+      name: sortedMembers.length > 1 ? `${firstName} 외 ${sortedMembers.length - 1}명 QT` : `${firstName}님과의 QT`,
+      participantIds: sortedMembers.map(({ id }) => id),
+      verse,
+      messages: [],
+      time: '방금',
+      unread: 0,
+      createdAt,
+    });
+  };
+
+  if (step === 'verse') {
+    return (
+      <RepresentativeVersePicker
+        title="QT 말씀 선택"
+        currentProfile={{ verseRef: '빌립보서 4:13' }}
+        selectedTranslation={selectedTranslation}
+        onClose={() => setStep('members')}
+        onSelect={createRoomWithVerse}
+      />
+    );
+  }
+
+  return (
+    <div className="qt-creation-layer">
+      <button className="qt-creation-backdrop" type="button" aria-label="QT 만들기 닫기" onClick={onClose} />
+      <section className="qt-creation-sheet" role="dialog" aria-modal="true" aria-labelledby="qt-creation-title">
+        <header><div><h2 id="qt-creation-title">함께 QT할 친구를 골라주세요</h2><p>선택한 친구와 같은 말씀으로 QT를 시작해요</p></div><button type="button" aria-label="QT 만들기 닫기" onClick={onClose}><X size={21} /></button></header>
+        <div className="qt-source-switch" role="tablist" aria-label="QT 친구 선택 기준">
+          <button className={sourceMode === 'recent' ? 'is-active' : ''} type="button" role="tab" aria-selected={sourceMode === 'recent'} onClick={() => changeSourceMode('recent')}>최근 대화</button>
+          <button className={sourceMode === 'qt' ? 'is-active' : ''} type="button" role="tab" aria-selected={sourceMode === 'qt'} onClick={() => changeSourceMode('qt')}>최근 QT</button>
+        </div>
+        {selectedMembers.length > 0 && (
+          <div className="qt-selected-members" aria-label={`선택한 친구 ${selectedMembers.length}명`}>
+            {selectedMembers.map((member) => (
+              <article key={member.id} onPointerDown={() => startProfileHold(member)} onPointerUp={cancelProfileHold} onPointerCancel={cancelProfileHold} onPointerLeave={cancelProfileHold} onContextMenu={(event) => event.preventDefault()}>
+                <span className={`directory-avatar tone-${member.tone ?? 'violet'}`} aria-hidden="true"><UserRound className="default-profile-glyph" /></span>
+                <strong>{member.name}</strong>
+                <button type="button" aria-label={`${member.name} 선택 취소`} onPointerDown={(event) => event.stopPropagation()} onClick={() => toggleMember(member.id)}><X size={11} strokeWidth={3} /></button>
+              </article>
+            ))}
+          </div>
+        )}
+        <label className="qt-member-search"><Search size={18} aria-hidden="true" /><input aria-label="QT 친구 검색" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="이름 또는 부서 검색" />{query && <button type="button" aria-label="검색어 지우기" onClick={() => setQuery('')}><X size={16} /></button>}</label>
+        <div className="qt-member-list">
+          {candidates.map((member) => {
+            const selected = selectedIds.includes(member.id);
+            return <button className={selected ? 'is-selected' : ''} type="button" aria-pressed={selected} key={member.id} onClick={() => toggleMember(member.id)}><span className={`directory-avatar tone-${member.tone ?? 'violet'}`} aria-hidden="true"><UserRound className="default-profile-glyph" /></span><span><strong>{member.name}</strong><small>{member.department} · {member.role}</small></span><i aria-hidden="true">{selected && <Check size={16} />}</i></button>;
+          })}
+          {!candidates.length && <p>{sourceMode === 'recent' ? '최근 대화한 친구가 없어요.' : '최근 함께 QT한 친구가 없어요.'}</p>}
+        </div>
+        <footer><span>{selectedMembers.length}명 선택</span><button type="button" disabled={!selectedMembers.length} onClick={() => setStep('verse')}>말씀 선택</button></footer>
+      </section>
+      {previewMember && <MemberProfileSheet member={previewMember} onClose={() => setPreviewMember(null)} />}
+    </div>
+  );
+}
+
+function QtRoomScreen({ room, setQtRooms, onBack }) {
+  const [draft, setDraft] = useState('');
+  const participants = getConversationParticipants(room.participantIds);
+
+  const sendQtMessage = () => {
+    const text = draft.trim();
+    if (!text) return;
+    const message = { id: `qt-message-${Date.now()}`, from: 'me', author: '나', text, time: '방금' };
+    setQtRooms((current) => current.map((item) => item.id === room.id
+      ? { ...item, messages: [...item.messages, message], time: '방금', unread: 0 }
+      : item));
+    setDraft('');
+  };
+
+  return (
+    <section className="qt-room-screen" aria-label={`${room.name} QT방`}>
+      <header><button type="button" aria-label="QT 목록으로 돌아가기" onClick={onBack}><ChevronLeft size={23} /></button><div><h2>{room.name}</h2><p>{participants.map(({ name }) => name).join(', ')}</p></div></header>
+      <blockquote><BookOpen size={18} aria-hidden="true" /><p>{room.verse.text}</p><cite>{room.verse.reference}</cite></blockquote>
+      <div className="qt-room-messages">
+        {!room.messages.length && <p className="qt-room-empty">말씀을 천천히 묵상하고 첫 나눔을 남겨보세요.</p>}
+        {room.messages.map((message) => <article className={message.from === 'me' ? 'is-me' : ''} key={message.id}><strong>{message.author}</strong><p>{message.text}</p><time>{message.time}</time></article>)}
+      </div>
+      <form onSubmit={(event) => { event.preventDefault(); sendQtMessage(); }}><textarea rows="1" aria-label="QT 나눔 입력" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="QT 나눔을 남겨보세요" /><button type="submit" aria-label="QT 나눔 보내기" disabled={!draft.trim()}><Send size={18} /></button></form>
+    </section>
   );
 }
 
@@ -2634,9 +2998,10 @@ function HomeRecommendations({ query, setQuery, selectBiblePassage, favoriteRefs
   );
 }
 
-function MessageView({ conversations, setConversations, friendsMenuOpen, onCloseFriendsMenu }) {
+function MessageView({ conversations, setConversations, qtRooms, setQtRooms, friendsMenuOpen, onCloseFriendsMenu }) {
   const [directoryMode, setDirectoryMode] = useState('recent');
   const [openConversationId, setOpenConversationId] = useState('');
+  const [openQtRoomId, setOpenQtRoomId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMemberProfile, setSelectedMemberProfile] = useState(null);
   const [groupBuilderOpen, setGroupBuilderOpen] = useState(false);
@@ -2673,6 +3038,16 @@ function MessageView({ conversations, setConversations, friendsMenuOpen, onClose
     && [member.name, member.department, member.role]
       .some((value) => value.toLowerCase().includes(normalizedQuery))
   ));
+  const filteredQtRooms = qtRooms.filter((room) => (
+    [
+      room.name,
+      room.verse?.reference,
+      room.verse?.text,
+      ...getConversationParticipants(room.participantIds).map(({ name }) => name),
+      ...room.messages.map(({ text }) => text),
+    ].filter(Boolean).some((value) => value.toLowerCase().includes(normalizedQuery))
+  ));
+  const openQtRoom = qtRooms.find(({ id }) => id === openQtRoomId);
 
   useEffect(() => writeStoredValue('bibleon.friendIds', friendIds), [friendIds]);
   useEffect(() => writeStoredValue('bibleon.blockedFriendIds', blockedFriendIds), [blockedFriendIds]);
@@ -2766,6 +3141,15 @@ function MessageView({ conversations, setConversations, friendsMenuOpen, onClose
             >
               최근 대화
             </button>
+            <button
+              className={directoryMode === 'qt' ? 'is-active' : ''}
+              type="button"
+              role="tab"
+              aria-selected={directoryMode === 'qt'}
+              onClick={() => setDirectoryMode('qt')}
+            >
+              QT
+            </button>
           </div>
           <button
             className="message-group-create-icon"
@@ -2783,10 +3167,10 @@ function MessageView({ conversations, setConversations, friendsMenuOpen, onClose
         <label className="message-search">
           <Search size={18} aria-hidden="true" />
           <input
-            aria-label={directoryMode === 'recent' ? '최근 대화 검색' : '구성원 검색'}
+            aria-label={directoryMode === 'recent' ? '최근 대화 검색' : directoryMode === 'qt' ? 'QT 검색' : '구성원 검색'}
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder={directoryMode === 'recent' ? '최근 대화 검색' : '구성원 검색'}
+            placeholder={directoryMode === 'recent' ? '최근 대화 검색' : directoryMode === 'qt' ? 'QT 검색' : '구성원 검색'}
           />
           {searchQuery && (
             <button type="button" aria-label="검색어 지우기" onClick={() => setSearchQuery('')}>
@@ -2822,7 +3206,7 @@ function MessageView({ conversations, setConversations, friendsMenuOpen, onClose
               <p className="message-empty">{normalizedQuery ? '일치하는 최근 대화가 없어요.' : '최근 대화가 없어요.'}</p>
             )}
           </div>
-        ) : (
+        ) : directoryMode === 'members' ? (
           <div className="member-directory-list">
             {filteredDirectoryMembers.map((member) => (
               <button
@@ -2840,6 +3224,24 @@ function MessageView({ conversations, setConversations, friendsMenuOpen, onClose
               </button>
             ))}
             {filteredDirectoryMembers.length === 0 && <p className="message-empty">검색 결과가 없어요.</p>}
+          </div>
+        ) : (
+          <div className="qt-room-list">
+            {filteredQtRooms.map((room) => {
+              const participants = getConversationParticipants(room.participantIds);
+              const lastMessage = room.messages.at(-1)?.text ?? '아직 나눔이 없어요.';
+              return (
+                <button type="button" key={room.id} onClick={() => {
+                  setOpenQtRoomId(room.id);
+                  setQtRooms((current) => current.map((item) => item.id === room.id ? { ...item, unread: 0 } : item));
+                }}>
+                  <span className="member-avatar" aria-hidden="true"><BookOpen className="default-profile-glyph" /></span>
+                  <span className="qt-room-list-copy"><span><strong>{room.name}</strong><small>{participants.map(({ name }) => name).join(', ')}</small></span><p>{lastMessage}</p><cite>{room.verse.reference}</cite></span>
+                  <span className="conversation-meta"><time>{room.time}</time>{room.unread > 0 && <b>{room.unread}</b>}</span>
+                </button>
+              );
+            })}
+            {!filteredQtRooms.length && <p className="message-empty">{normalizedQuery ? '일치하는 QT가 없어요.' : '함께한 QT가 없어요.'}</p>}
           </div>
         )}
       </section>
@@ -2874,6 +3276,10 @@ function MessageView({ conversations, setConversations, friendsMenuOpen, onClose
           onUpdateDraft={setDraftConversation}
           onCreateGroup={createGroupFromConversation}
         />
+      )}
+
+      {openQtRoom && (
+        <QtRoomScreen room={openQtRoom} setQtRooms={setQtRooms} onBack={() => setOpenQtRoomId('')} />
       )}
 
       <MessageFriendsPanel
@@ -3936,7 +4342,7 @@ function SelfProfileEditor({ profile, selectedTranslation, onClose, onSave }) {
   );
 }
 
-function RepresentativeVersePicker({ currentProfile, selectedTranslation, onClose, onSelect }) {
+function RepresentativeVersePicker({ currentProfile, selectedTranslation, onClose, onSelect, title = '대표 말씀 선택' }) {
   const initialBook = bibleBooks.find((book) => currentProfile.verseRef.startsWith(book.name)) ?? bibleBooks.find(({ id }) => id === 'philippians');
   const referenceNumbers = currentProfile.verseRef.match(/(\d+)\s*:\s*(\d+)/);
   const [mode, setMode] = useState('browse');
@@ -4024,7 +4430,7 @@ function RepresentativeVersePicker({ currentProfile, selectedTranslation, onClos
         <header>
           <div>
             {mode === 'browse' && step !== 'book' && <button type="button" aria-label="이전 단계" onClick={goBackBrowseStep}><ChevronLeft size={22} /></button>}
-            <div><h2 id="representative-verse-picker-title">대표 말씀 선택</h2><p>{selectedTranslation} · {translationLabel}</p></div>
+            <div><h2 id="representative-verse-picker-title">{title}</h2><p>{selectedTranslation} · {translationLabel}</p></div>
           </div>
           <button type="button" aria-label="대표 말씀 선택 닫기" onClick={onClose}><X size={21} /></button>
         </header>
