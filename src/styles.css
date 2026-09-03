@@ -8,9 +8,10 @@
   --app-bg-gradient: radial-gradient(
     ellipse at center,
     var(--app-bg-deep) 0%,
-    #e3deed 30%,
-    #ebe7f2 58%,
-    #f1eef6 80%,
+    #e0daeb 22%,
+    #e6e1ef 44%,
+    #ece8f3 66%,
+    #f1eef7 84%,
     var(--app-bg) 100%
   );
   --surface: #ffffff;
@@ -82,9 +83,8 @@ button:disabled {
   --app-gradient-center-x: 50%;
   --app-gradient-center-y: 50%;
   --app-gradient-final-height: 70%;
-  --app-gradient-final-width: 92%;
-  --app-gradient-start-scale-x: 0.1;
-  --app-gradient-start-scale-y: 0.035;
+  --app-gradient-final-width: 230%;
+  --app-gradient-start-scale: 0.035;
   background: var(--app-bg);
   height: 100vh;
   height: 100dvh;
@@ -105,7 +105,7 @@ button:disabled {
   position: absolute;
   top: var(--app-gradient-center-y);
   transform: translate(-50%, -50%);
-  transition: transform 1500ms cubic-bezier(0.12, 0.75, 0.16, 1);
+  transition: transform 750ms cubic-bezier(0.12, 0.75, 0.16, 1);
   transition-timing-function: linear(
     0,
     0.279 10%,
@@ -129,25 +129,65 @@ button:disabled {
 }
 
 .app-shell.is-home-gradient-hidden::before {
-  transform: translate(-50%, -50%) scale(
-    var(--app-gradient-start-scale-x),
-    var(--app-gradient-start-scale-y)
-  );
+  transform: translate(-50%, -50%) scale(var(--app-gradient-start-scale));
   transition: none;
 }
 
-.app-shell.is-home-search-flashing .home-rag-search {
-  animation: home-search-outline-triple-flash 500ms linear both;
+.home-search-orbit {
+  height: calc(100% + 2px);
+  inset: -1px;
+  margin: 0;
+  opacity: 0;
+  overflow: visible;
+  pointer-events: none;
+  position: absolute;
+  width: calc(100% + 2px);
+  z-index: 3;
 }
 
-@keyframes home-search-outline-triple-flash {
-  0%, 28%, 62%, 100% {
-    border-color: #d7dbe1;
-    box-shadow: 0 4px 15px rgb(25 31 40 / 7%);
+.home-search-orbit-line {
+  fill: none;
+  height: calc(100% - 2px);
+  rx: 27px;
+  stroke: var(--accent-deep);
+  stroke-dasharray: var(--home-search-orbit-dasharray, 14 86);
+  stroke-dashoffset: 0;
+  stroke-linecap: round;
+  stroke-width: 2.5px;
+  vector-effect: non-scaling-stroke;
+  width: calc(100% - 2px);
+  x: 1px;
+  y: 1px;
+}
+
+.app-shell.is-home-search-orbiting .home-search-orbit {
+  opacity: 1;
+}
+
+.app-shell.is-home-search-orbiting .home-search-orbit-line {
+  animation: home-search-orbit 500ms both;
+  animation-timing-function: linear(
+    0,
+    0.279 10%,
+    0.447 20%,
+    0.568 30%,
+    0.663 40%,
+    0.74 50%,
+    0.806 60%,
+    0.863 70%,
+    0.914 80%,
+    0.959 90%,
+    1
+  );
+}
+
+@keyframes home-search-orbit {
+  from {
+    stroke-dashoffset: 0;
   }
-  12%, 45%, 78% {
-    border-color: var(--accent-deep);
-    box-shadow: 0 0 0 2px rgb(75 66 152 / 22%), 0 4px 15px rgb(25 31 40 / 7%);
+
+  to {
+    stroke-dashoffset: -100;
   }
 }
 
@@ -962,6 +1002,7 @@ button:disabled {
   grid-template-columns: 22px minmax(0, 1fr) auto auto;
   min-height: 54px;
   padding: 6px 6px 6px 18px;
+  position: relative;
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
@@ -970,7 +1011,7 @@ button:disabled {
   box-shadow: 0 0 0 3px rgb(75 66 152 / 11%), 0 5px 18px rgb(25 31 40 / 8%);
 }
 
-.home-rag-search > svg {
+.home-rag-search > svg:not(.home-search-orbit) {
   align-self: end;
   color: var(--accent-deep);
   margin-bottom: 10px;
