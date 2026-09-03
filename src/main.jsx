@@ -410,8 +410,6 @@ const HOME_CHAT_STORAGE_KEY = 'bibleon.homeChatRoomsV1';
 const HOME_CHAT_ACTIVE_KEY = 'bibleon.activeHomeChatV1';
 const HOME_CHAT_LEGACY_KEY = 'bibleon.homeTestMessagesV2';
 const HOME_CHAT_DELETE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
-const HOME_SEARCH_EMPHASIS_DURATION_MS = 700;
-const HOME_SEARCH_EMPHASIS_PAUSE_MS = 200;
 
 function makeHomeChatTitle(messages) {
   const firstQuestion = messages.find(({ role }) => role === 'user')?.text?.trim() ?? '';
@@ -469,7 +467,6 @@ function App() {
   const [loadingAttempt, setLoadingAttempt] = useState(0);
   const [isHomeIntro, setIsHomeIntro] = useState(true);
   const [isHomeGradientVisible, setIsHomeGradientVisible] = useState(false);
-  const [isHomeSearchEmphasizing, setIsHomeSearchEmphasizing] = useState(false);
   const [isHomeReturning, setIsHomeReturning] = useState(false);
   const [activeTab, setActiveTab] = useState('home');
   const [selectedBookId, setSelectedBookId] = useState('philippians');
@@ -547,14 +544,7 @@ function App() {
 
   useEffect(() => {
     if (isAppLoading) return undefined;
-    const emphasisTimerId = window.setTimeout(() => setIsHomeSearchEmphasizing(true), 0);
-    const emphasisEndTimerId = window.setTimeout(
-      () => setIsHomeSearchEmphasizing(false),
-      HOME_SEARCH_EMPHASIS_DURATION_MS
-    );
-    const revealTimerId = window.setTimeout(() => {
-      setIsHomeGradientVisible(true);
-    }, HOME_SEARCH_EMPHASIS_DURATION_MS + HOME_SEARCH_EMPHASIS_PAUSE_MS);
+    setIsHomeGradientVisible(true);
     const returnTimerId = window.setTimeout(() => {
       setIsHomeIntro(false);
       setIsHomeReturning(true);
@@ -562,9 +552,6 @@ function App() {
     const settleTimerId = window.setTimeout(() => setIsHomeReturning(false), 3000);
 
     return () => {
-      window.clearTimeout(emphasisTimerId);
-      window.clearTimeout(emphasisEndTimerId);
-      window.clearTimeout(revealTimerId);
       window.clearTimeout(returnTimerId);
       window.clearTimeout(settleTimerId);
     };
@@ -707,7 +694,7 @@ function App() {
 
   return (
     <main
-      className={`app-shell ${activeTab === 'home' ? 'is-home-active' : ''} ${showHomeIntro ? 'is-home-intro' : ''} ${!isHomeGradientVisible ? 'is-home-gradient-hidden' : ''} ${isHomeSearchEmphasizing ? 'is-home-search-emphasizing' : ''} ${isHomeReturning ? 'is-home-returning' : ''} ${activeTab === 'home' && isHomeChatOpen ? 'is-home-chatting' : ''}`}
+      className={`app-shell ${activeTab === 'home' ? 'is-home-active' : ''} ${showHomeIntro ? 'is-home-intro' : ''} ${!isHomeGradientVisible ? 'is-home-gradient-hidden' : ''} ${isHomeReturning ? 'is-home-returning' : ''} ${activeTab === 'home' && isHomeChatOpen ? 'is-home-chatting' : ''}`}
       aria-busy={isAppLoading}
     >
       {isAppLoading && (
@@ -1235,16 +1222,9 @@ function HomeView({
         const gradientFinalHeight = availableHeight * 0.7;
         const gradientFinalWidth = gradientFinalHeight * (gradientStartWidth / gradientStartHeight);
         const gradientStartScale = gradientStartHeight / gradientFinalHeight;
-        const capsulePerimeter = 2 * Math.max(0, searchRect.width - searchRect.height)
-          + Math.PI * searchRect.height;
-        const emphasisDash = Math.min(30, (searchRect.width * 0.3 / capsulePerimeter) * 100);
         shell.style.setProperty('--app-gradient-final-width', `${gradientFinalWidth}px`);
         shell.style.setProperty('--app-gradient-final-height', `${gradientFinalHeight}px`);
         shell.style.setProperty('--app-gradient-start-scale', `${gradientStartScale}`);
-        searchBar.style.setProperty(
-          '--home-search-emphasis-dasharray',
-          `${emphasisDash} ${100 - emphasisDash}`
-        );
       }
     };
 
@@ -1325,9 +1305,6 @@ function HomeView({
       <div className="home-content-cluster" ref={homeContentClusterRef}>
         <div className="home-search-sticky" ref={searchContainerRef}>
           <form className="home-rag-search" role="search" onSubmit={submitQuestion}>
-            <svg className="home-search-emphasis" aria-hidden="true">
-              <rect className="home-search-emphasis-line" pathLength="100" />
-            </svg>
             <Search size={20} aria-hidden="true" />
             <textarea
               ref={questionInputRef}
