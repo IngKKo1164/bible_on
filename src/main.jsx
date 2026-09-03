@@ -701,7 +701,7 @@ function App() {
 
   return (
     <main
-      className={`app-shell ${showHomeIntro ? 'is-home-intro' : ''} ${!isHomeGradientVisible ? 'is-home-gradient-hidden' : ''} ${isHomeSearchFlashing ? 'is-home-search-flashing' : ''} ${isHomeReturning ? 'is-home-returning' : ''} ${activeTab === 'home' && isHomeChatOpen ? 'is-home-chatting' : ''}`}
+      className={`app-shell ${activeTab === 'home' ? 'is-home-active' : ''} ${showHomeIntro ? 'is-home-intro' : ''} ${!isHomeGradientVisible ? 'is-home-gradient-hidden' : ''} ${isHomeSearchFlashing ? 'is-home-search-flashing' : ''} ${isHomeReturning ? 'is-home-returning' : ''} ${activeTab === 'home' && isHomeChatOpen ? 'is-home-chatting' : ''}`}
       aria-busy={isAppLoading}
     >
       {isAppLoading && (
@@ -1224,18 +1224,19 @@ function HomeView({
           '--app-gradient-center-y',
           `${searchRect.top + searchRect.height / 2 - shellRect.top}px`
         );
-        const outlineTop = searchRect.top - shellRect.top;
-        const outlineRight = shellRect.right - searchRect.right;
-        const outlineBottom = shellRect.bottom - searchRect.bottom;
-        const outlineLeft = searchRect.left - shellRect.left;
-        shell.style.setProperty('--app-search-outline-top', `${outlineTop}px`);
-        shell.style.setProperty('--app-search-outline-right', `${outlineRight}px`);
-        shell.style.setProperty('--app-search-outline-bottom', `${outlineBottom}px`);
-        shell.style.setProperty('--app-search-outline-left', `${outlineLeft}px`);
-        shell.style.setProperty('--app-search-outline-radius', `${searchRect.height / 2}px`);
+        const gradientStartWidth = searchRect.width * 0.1;
+        const gradientStartHeight = searchRect.height * 0.25;
+        const gradientFinalWidth = shellRect.width * 0.92;
+        const gradientFinalHeight = availableHeight * 0.7;
+        shell.style.setProperty('--app-gradient-final-width', `${gradientFinalWidth}px`);
+        shell.style.setProperty('--app-gradient-final-height', `${gradientFinalHeight}px`);
         shell.style.setProperty(
-          '--app-gradient-max-spread',
-          `${Math.max(outlineTop, outlineRight, outlineBottom, outlineLeft) + 32}px`
+          '--app-gradient-start-scale-x',
+          `${gradientStartWidth / gradientFinalWidth}`
+        );
+        shell.style.setProperty(
+          '--app-gradient-start-scale-y',
+          `${gradientStartHeight / gradientFinalHeight}`
         );
       }
     };

@@ -4,13 +4,13 @@
   --accent-dark: #37306f;
   --bg: #f4f2f8;
   --app-bg: #f4f2f8;
-  --app-bg-deep: #e1dcec;
+  --app-bg-deep: #dcd6e9;
   --app-bg-gradient: radial-gradient(
-    circle at var(--app-gradient-center-x, 50%) var(--app-gradient-center-y, 50%),
+    ellipse at center,
     var(--app-bg-deep) 0%,
-    #e8e3f1 28%,
-    #efecf6 54%,
-    var(--app-bg) 78%,
+    #e3deed 30%,
+    #ebe7f2 58%,
+    #f1eef6 80%,
     var(--app-bg) 100%
   );
   --surface: #ffffff;
@@ -33,12 +33,6 @@
   font-synthesis: none;
   line-height: 1.45;
   text-rendering: optimizeLegibility;
-}
-
-@property --app-gradient-spread {
-  syntax: '<length>';
-  inherits: false;
-  initial-value: 0px;
 }
 
 * {
@@ -87,12 +81,10 @@ button:disabled {
 .app-shell {
   --app-gradient-center-x: 50%;
   --app-gradient-center-y: 50%;
-  --app-gradient-max-spread: 520px;
-  --app-search-outline-bottom: 45%;
-  --app-search-outline-left: 20px;
-  --app-search-outline-radius: 28px;
-  --app-search-outline-right: 20px;
-  --app-search-outline-top: 45%;
+  --app-gradient-final-height: 70%;
+  --app-gradient-final-width: 92%;
+  --app-gradient-start-scale-x: 0.1;
+  --app-gradient-start-scale-y: 0.035;
   background: var(--app-bg);
   height: 100vh;
   height: 100dvh;
@@ -103,25 +95,44 @@ button:disabled {
 }
 
 .app-shell::before {
-  --app-gradient-spread: var(--app-gradient-max-spread);
   background: var(--app-bg-gradient);
-  clip-path: inset(
-    calc(var(--app-search-outline-top) - var(--app-gradient-spread))
-    calc(var(--app-search-outline-right) - var(--app-gradient-spread))
-    calc(var(--app-search-outline-bottom) - var(--app-gradient-spread))
-    calc(var(--app-search-outline-left) - var(--app-gradient-spread))
-    round calc(var(--app-search-outline-radius) + var(--app-gradient-spread))
-  );
+  border-radius: 50%;
   content: '';
-  inset: 0;
+  height: var(--app-gradient-final-height);
+  left: var(--app-gradient-center-x);
+  opacity: 0;
   pointer-events: none;
   position: absolute;
-  transition: --app-gradient-spread 1500ms linear;
+  top: var(--app-gradient-center-y);
+  transform: translate(-50%, -50%);
+  transition: transform 1500ms cubic-bezier(0.12, 0.75, 0.16, 1);
+  transition-timing-function: linear(
+    0,
+    0.279 10%,
+    0.447 20%,
+    0.568 30%,
+    0.663 40%,
+    0.74 50%,
+    0.806 60%,
+    0.863 70%,
+    0.914 80%,
+    0.959 90%,
+    1
+  );
+  will-change: transform;
+  width: var(--app-gradient-final-width);
   z-index: 0;
 }
 
+.app-shell.is-home-active::before {
+  opacity: 1;
+}
+
 .app-shell.is-home-gradient-hidden::before {
-  --app-gradient-spread: 0px;
+  transform: translate(-50%, -50%) scale(
+    var(--app-gradient-start-scale-x),
+    var(--app-gradient-start-scale-y)
+  );
   transition: none;
 }
 
@@ -148,7 +159,7 @@ button:disabled {
 
 .app-loading-screen {
   align-items: center;
-  background: var(--app-bg-gradient);
+  background: var(--app-bg);
   display: flex;
   flex-direction: column;
   inset: 0;
