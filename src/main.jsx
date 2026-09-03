@@ -11,13 +11,16 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  FileText,
   Flame,
   Grid3X3,
   Highlighter,
   Home,
+  Image as ImageIcon,
   List,
   Menu,
   MessageCircle,
+  Mic,
   MoreHorizontal,
   NotebookPen,
   PenLine,
@@ -31,11 +34,13 @@ import {
   ThumbsUp,
   Trash2,
   Underline,
+  UserMinus,
   UserPlus,
   UserRound,
   Users,
   Waves,
   X,
+  Ban,
 } from 'lucide-react';
 import { BibleOnLogo, BibleBookIcon as BookOpen, ChurchCrossIcon as Church, SixteenthNoteIcon } from './brandIcons';
 import { bibleCatalog, loadBibleChapter, preloadBible, searchBibleVerses } from './bibleData';
@@ -276,6 +281,7 @@ const churchDirectoryMembers = [
   {
     id: 'harin',
     name: '정하린',
+    nickname: '하린봄',
     department: '청년부',
     role: '셀원',
     verseRef: '이사야 41:10',
@@ -285,6 +291,7 @@ const churchDirectoryMembers = [
   {
     id: 'doyun',
     name: '최도윤',
+    nickname: '도윤길',
     department: '장년부',
     role: '순장',
     verseRef: '여호수아 1:9',
@@ -294,6 +301,7 @@ const churchDirectoryMembers = [
   {
     id: 'seoyeon',
     name: '한서연',
+    nickname: '서연찬양',
     department: '찬양팀',
     role: '팀 리더',
     verseRef: '시편 119:105',
@@ -303,6 +311,7 @@ const churchDirectoryMembers = [
   {
     id: 'jihoon',
     name: '오지훈',
+    nickname: '지훈미디어',
     department: '미디어팀',
     role: '팀원',
     verseRef: '로마서 12:12',
@@ -312,6 +321,7 @@ const churchDirectoryMembers = [
   {
     id: 'yerim',
     name: '윤예림',
+    nickname: '예림씨앗',
     department: '아동부',
     role: '교사',
     verseRef: '빌립보서 4:13',
@@ -321,6 +331,7 @@ const churchDirectoryMembers = [
   {
     id: 'subin',
     name: '강수빈',
+    nickname: '수빈안내',
     department: '새가족부',
     role: '안내팀',
     verseRef: '마태복음 5:16',
@@ -349,6 +360,7 @@ const churchMessageMembers = [
   ...initialChurchConversations.map((conversation, index) => ({
     id: conversation.id,
     name: conversation.name,
+    nickname: ['민서샘', '재윤길', '은지찬양'][index],
     department: conversation.department,
     role: conversation.role,
     verseRef: ['잠언 16:9', '시편 37:5', '시편 150:6'][index],
@@ -603,6 +615,7 @@ function App() {
   const [conversations, setConversations] = useState(initialChurchConversations);
   const [isHomeChatOpen, setIsHomeChatOpen] = useState(false);
   const [homeChatHistoryOpen, setHomeChatHistoryOpen] = useState(false);
+  const [messageFriendsMenuOpen, setMessageFriendsMenuOpen] = useState(false);
   const [homeChatRooms, setHomeChatRooms] = useState(() => initialHomeChatRoomsRef.current);
   const [activeHomeChatId, setActiveHomeChatId] = useState(() => {
     const storedActiveId = readStoredValue(HOME_CHAT_ACTIVE_KEY, '');
@@ -695,6 +708,7 @@ function App() {
   };
 
   const selectTab = (tabId) => {
+    setMessageFriendsMenuOpen(false);
     if (tabId === 'home') {
       setActiveTab('home');
       closeHomeChat();
@@ -839,9 +853,11 @@ function App() {
       )}
       <section className="workspace" aria-label="바이블온 앱" ref={workspaceRef}>
         <Topbar
+          activeTab={activeTab}
           selectedTranslation={selectedTranslation}
           setSelectedTranslation={setSelectedTranslation}
           onOpenChatHistory={() => setHomeChatHistoryOpen(true)}
+          onOpenMessageFriends={() => setMessageFriendsMenuOpen(true)}
         />
         {activeTab === 'home' && (
           <HomeView
@@ -893,7 +909,12 @@ function App() {
           />
         )}
         {activeTab === 'messages' && (
-          <MessageView conversations={conversations} setConversations={setConversations} />
+          <MessageView
+            conversations={conversations}
+            setConversations={setConversations}
+            friendsMenuOpen={messageFriendsMenuOpen}
+            onCloseFriendsMenu={() => setMessageFriendsMenuOpen(false)}
+          />
         )}
         {activeTab === 'profile' && (
           <ProfileView
@@ -920,7 +941,7 @@ function App() {
   );
 }
 
-function Topbar({ selectedTranslation, setSelectedTranslation, onOpenChatHistory }) {
+function Topbar({ activeTab, selectedTranslation, setSelectedTranslation, onOpenChatHistory, onOpenMessageFriends }) {
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notifications, setNotifications] = useState(initialRecentNotifications);
@@ -939,11 +960,15 @@ function Topbar({ selectedTranslation, setSelectedTranslation, onOpenChatHistory
     setSettingsOpen(true);
   };
 
-  const openChatHistory = () => {
+  const openPrimaryMenu = () => {
     setNotificationOpen(false);
     setSettingsOpen(false);
-    onOpenChatHistory();
+    if (activeTab === 'messages') onOpenMessageFriends();
+    else onOpenChatHistory();
   };
+
+  const primaryMenuLabel = activeTab === 'messages' ? '친구 관리 열기' : '지난 대화 열기';
+  const primaryMenuTitle = activeTab === 'messages' ? '친구 관리' : '지난 대화';
 
   return (
     <>
@@ -951,9 +976,9 @@ function Topbar({ selectedTranslation, setSelectedTranslation, onOpenChatHistory
         <button
           className="icon-button topbar-history-button"
           type="button"
-          aria-label="지난 대화 열기"
-          title="지난 대화"
-          onClick={openChatHistory}
+          aria-label={primaryMenuLabel}
+          title={primaryMenuTitle}
+          onClick={openPrimaryMenu}
         >
           <Menu size={21} aria-hidden="true" />
         </button>
@@ -2609,13 +2634,16 @@ function HomeRecommendations({ query, setQuery, selectBiblePassage, favoriteRefs
   );
 }
 
-function MessageView({ conversations, setConversations }) {
+function MessageView({ conversations, setConversations, friendsMenuOpen, onCloseFriendsMenu }) {
   const [directoryMode, setDirectoryMode] = useState('recent');
   const [openConversationId, setOpenConversationId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMemberProfile, setSelectedMemberProfile] = useState(null);
   const [groupBuilderOpen, setGroupBuilderOpen] = useState(false);
   const [draftConversation, setDraftConversation] = useState(null);
+  const [friendIds, setFriendIds] = useState(() => readStoredValue('bibleon.friendIds', ['minseo', 'jaeyun', 'eunji']));
+  const [blockedFriendIds, setBlockedFriendIds] = useState(() => readStoredValue('bibleon.blockedFriendIds', []));
+  const [sentFriendRequestIds, setSentFriendRequestIds] = useState(() => readStoredValue('bibleon.sentFriendRequestIds', []));
   const storedOpenConversation = conversations.find(({ id }) => id === openConversationId);
   const openConversation = storedOpenConversation
     ?? (draftConversation?.id === openConversationId ? draftConversation : null);
@@ -2645,6 +2673,10 @@ function MessageView({ conversations, setConversations }) {
     && [member.name, member.department, member.role]
       .some((value) => value.toLowerCase().includes(normalizedQuery))
   ));
+
+  useEffect(() => writeStoredValue('bibleon.friendIds', friendIds), [friendIds]);
+  useEffect(() => writeStoredValue('bibleon.blockedFriendIds', blockedFriendIds), [blockedFriendIds]);
+  useEffect(() => writeStoredValue('bibleon.sentFriendRequestIds', sentFriendRequestIds), [sentFriendRequestIds]);
 
   const selectConversation = (conversationId) => {
     setDraftConversation(null);
@@ -2843,6 +2875,183 @@ function MessageView({ conversations, setConversations }) {
           onCreateGroup={createGroupFromConversation}
         />
       )}
+
+      <MessageFriendsPanel
+        isOpen={friendsMenuOpen}
+        onClose={onCloseFriendsMenu}
+        friendIds={friendIds}
+        setFriendIds={setFriendIds}
+        blockedFriendIds={blockedFriendIds}
+        setBlockedFriendIds={setBlockedFriendIds}
+        sentFriendRequestIds={sentFriendRequestIds}
+        setSentFriendRequestIds={setSentFriendRequestIds}
+      />
+    </div>
+  );
+}
+
+function MessageFriendsPanel({
+  isOpen,
+  onClose,
+  friendIds,
+  setFriendIds,
+  blockedFriendIds,
+  setBlockedFriendIds,
+  sentFriendRequestIds,
+  setSentFriendRequestIds,
+}) {
+  const [mode, setMode] = useState('root');
+  const [friendAddOpen, setFriendAddOpen] = useState(false);
+  const friendMembers = churchMessageMembers.filter(({ id }) => friendIds.includes(id));
+  const blockedMembers = churchMessageMembers.filter(({ id }) => blockedFriendIds.includes(id));
+
+  useEffect(() => {
+    if (!isOpen) {
+      setMode('root');
+      setFriendAddOpen(false);
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const removeFriend = (memberId) => {
+    setFriendIds((current) => current.filter((id) => id !== memberId));
+  };
+
+  const blockFriend = (memberId) => {
+    removeFriend(memberId);
+    setBlockedFriendIds((current) => [...new Set([...current, memberId])]);
+  };
+
+  const unblockFriend = (memberId) => {
+    setBlockedFriendIds((current) => current.filter((id) => id !== memberId));
+  };
+
+  const panelTitle = mode === 'delete' ? '친구 삭제' : mode === 'blocked' ? '차단 관리' : '친구 관리';
+
+  return (
+    <div className="message-friends-layer">
+      <button className="message-friends-backdrop" type="button" aria-label="친구 관리 닫기" onClick={onClose} />
+      <aside className="message-friends-panel" aria-label={panelTitle}>
+        <header>
+          {mode !== 'root' && (
+            <button type="button" aria-label="친구 관리 메뉴로 돌아가기" onClick={() => setMode('root')}>
+              <ChevronLeft size={22} aria-hidden="true" />
+            </button>
+          )}
+          <h2>{panelTitle}</h2>
+          <button type="button" aria-label="친구 관리 닫기" onClick={onClose}><X size={21} aria-hidden="true" /></button>
+        </header>
+
+        {mode === 'root' && (
+          <div className="message-friend-options">
+            <button type="button" onClick={() => setFriendAddOpen(true)}>
+              <span><UserPlus size={21} aria-hidden="true" /></span>
+              <div><strong>친구 추가</strong><small>고유 닉네임으로 친구를 찾아요</small></div>
+              <ChevronRight size={18} aria-hidden="true" />
+            </button>
+            <button type="button" onClick={() => setMode('delete')}>
+              <span><UserMinus size={21} aria-hidden="true" /></span>
+              <div><strong>친구 삭제</strong><small>친구 {friendMembers.length}명을 관리해요</small></div>
+              <ChevronRight size={18} aria-hidden="true" />
+            </button>
+            <button type="button" onClick={() => setMode('blocked')}>
+              <span><ShieldCheck size={21} aria-hidden="true" /></span>
+              <div><strong>차단 관리</strong><small>차단한 사용자 {blockedMembers.length}명</small></div>
+              <ChevronRight size={18} aria-hidden="true" />
+            </button>
+          </div>
+        )}
+
+        {mode === 'delete' && (
+          <div className="message-friend-list">
+            {friendMembers.map((member) => (
+              <article key={member.id}>
+                <span className={`directory-avatar tone-${member.tone}`} aria-hidden="true"><UserRound className="default-profile-glyph" /></span>
+                <div><strong>{member.name}</strong><small>@{member.nickname}</small></div>
+                <span className="message-friend-row-actions">
+                  <button type="button" aria-label={`${member.name} 친구 삭제`} title="친구 삭제" onClick={() => removeFriend(member.id)}><UserMinus size={17} /></button>
+                  <button type="button" aria-label={`${member.name} 차단`} title="차단" onClick={() => blockFriend(member.id)}><Ban size={17} /></button>
+                </span>
+              </article>
+            ))}
+            {!friendMembers.length && <p>관리할 친구가 없어요.</p>}
+          </div>
+        )}
+
+        {mode === 'blocked' && (
+          <div className="message-friend-list">
+            {blockedMembers.map((member) => (
+              <article key={member.id}>
+                <span className={`directory-avatar tone-${member.tone}`} aria-hidden="true"><UserRound className="default-profile-glyph" /></span>
+                <div><strong>{member.name}</strong><small>@{member.nickname}</small></div>
+                <button className="message-unblock-button" type="button" onClick={() => unblockFriend(member.id)}>차단 해제</button>
+              </article>
+            ))}
+            {!blockedMembers.length && <p>차단한 사용자가 없어요.</p>}
+          </div>
+        )}
+      </aside>
+
+      {friendAddOpen && (
+        <FriendAddSheet
+          friendIds={friendIds}
+          blockedFriendIds={blockedFriendIds}
+          sentFriendRequestIds={sentFriendRequestIds}
+          setSentFriendRequestIds={setSentFriendRequestIds}
+          onClose={() => setFriendAddOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function FriendAddSheet({ friendIds, blockedFriendIds, sentFriendRequestIds, setSentFriendRequestIds, onClose }) {
+  const [nickname, setNickname] = useState('');
+  const [matchedMember, setMatchedMember] = useState(null);
+  const [searchMessage, setSearchMessage] = useState('');
+  const normalizedNickname = nickname.trim().normalize('NFKC').toLocaleLowerCase('ko-KR');
+
+  const findFriend = (event) => {
+    event.preventDefault();
+    const match = churchMessageMembers.find((member) => (
+      member.nickname.normalize('NFKC').toLocaleLowerCase('ko-KR') === normalizedNickname
+    ));
+    setMatchedMember(match ?? null);
+    setSearchMessage(match ? '' : '일치하는 닉네임을 찾지 못했어요.');
+  };
+
+  const requestFriend = () => {
+    if (!matchedMember) return;
+    setSentFriendRequestIds((current) => [...new Set([...current, matchedMember.id])]);
+  };
+
+  const isFriend = matchedMember && friendIds.includes(matchedMember.id);
+  const isBlocked = matchedMember && blockedFriendIds.includes(matchedMember.id);
+  const requestSent = matchedMember && sentFriendRequestIds.includes(matchedMember.id);
+
+  return (
+    <div className="friend-add-layer">
+      <button className="friend-add-backdrop" type="button" aria-label="친구 추가 닫기" onClick={onClose} />
+      <section className="friend-add-sheet" role="dialog" aria-modal="true" aria-labelledby="friend-add-title">
+        <header><div><h2 id="friend-add-title">친구 추가</h2><p>닉네임은 띄어쓰기 없이 정확히 입력해 주세요</p></div><button type="button" aria-label="친구 추가 닫기" onClick={onClose}><X size={21} /></button></header>
+        <form className="friend-nickname-search" onSubmit={findFriend}>
+          <label><Search size={18} aria-hidden="true" /><input autoFocus aria-label="친구 닉네임" value={nickname} onChange={(event) => { setNickname(event.target.value); setMatchedMember(null); setSearchMessage(''); }} placeholder="친구의 닉네임" /></label>
+          <button type="submit" disabled={!normalizedNickname}>찾기</button>
+        </form>
+
+        {searchMessage && <p className="friend-search-message" role="status">{searchMessage}</p>}
+        {matchedMember && (
+          <article className="friend-search-result">
+            <span className={`directory-avatar tone-${matchedMember.tone}`} aria-hidden="true"><UserRound className="default-profile-glyph" /></span>
+            <div className="friend-result-heading"><strong>{matchedMember.name}</strong><span>@{matchedMember.nickname}</span><small>{matchedMember.department} · {matchedMember.role}</small></div>
+            <blockquote><BookOpen size={16} aria-hidden="true" /><p>{matchedMember.representativeVerse}</p><cite>{matchedMember.verseRef}</cite></blockquote>
+            <button type="button" disabled={isFriend || isBlocked || requestSent} onClick={requestFriend}>
+              {isBlocked ? '차단 해제 후 신청 가능' : isFriend ? '이미 친구예요' : requestSent ? '친구 신청을 보냈어요' : '친구 신청'}
+            </button>
+          </article>
+        )}
+      </section>
     </div>
   );
 }
@@ -3080,8 +3289,19 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
   const [messageQuery, setMessageQuery] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [attachmentOpen, setAttachmentOpen] = useState(false);
+  const [attachmentHeight, setAttachmentHeight] = useState(() => Math.min(320, Math.round(window.innerHeight * 0.38)));
+  const [roomViewport, setRoomViewport] = useState(() => ({
+    height: window.visualViewport?.height ?? window.innerHeight,
+    top: window.visualViewport?.offsetTop ?? 0,
+  }));
   const searchInputRef = useRef(null);
   const messageListRef = useRef(null);
+  const composerInputRef = useRef(null);
+  const photoInputRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const baseViewportHeightRef = useRef(window.visualViewport?.height ?? window.innerHeight);
+  const keyboardHeightRef = useRef(Math.min(320, Math.round(window.innerHeight * 0.38)));
   const participantIds = getConversationParticipantIds(conversation);
   const participants = getConversationParticipants(participantIds);
   const inviteCandidates = churchMessageMembers.filter(({ id }) => !participantIds.includes(id));
@@ -3099,7 +3319,29 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
     if (!searchOpen && messageListRef.current) {
       messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
     }
-  }, [conversation.messages.length, searchOpen]);
+  }, [attachmentOpen, conversation.messages.length, searchOpen]);
+
+  useLayoutEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return undefined;
+
+    const updateViewport = () => {
+      const nextHeight = Math.round(viewport.height);
+      const nextTop = Math.round(viewport.offsetTop);
+      const obscuredHeight = Math.max(0, baseViewportHeightRef.current - nextHeight - nextTop);
+      if (obscuredHeight > 120) keyboardHeightRef.current = obscuredHeight;
+      else if (nextHeight > baseViewportHeightRef.current) baseViewportHeightRef.current = nextHeight;
+      setRoomViewport({ height: nextHeight, top: nextTop });
+    };
+
+    updateViewport();
+    viewport.addEventListener('resize', updateViewport);
+    viewport.addEventListener('scroll', updateViewport);
+    return () => {
+      viewport.removeEventListener('resize', updateViewport);
+      viewport.removeEventListener('scroll', updateViewport);
+    };
+  }, []);
 
   const updateConversation = (updater) => {
     if (conversation.isDraft) {
@@ -3113,9 +3355,8 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
     )));
   };
 
-  const sendMessage = (event) => {
-    event.preventDefault();
-    const text = draft.trim();
+  const appendOutgoingMessage = (messageText) => {
+    const text = messageText.trim();
     if (!text) return;
     const appendMessage = (current) => ({
       ...current,
@@ -3134,7 +3375,39 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
     });
     if (conversation.isDraft) onPersistDraft(appendMessage(conversation));
     else updateConversation(appendMessage);
+  };
+
+  const sendMessage = (event) => {
+    event.preventDefault();
+    const text = draft.trim();
+    if (!text) return;
+    appendOutgoingMessage(text);
     setDraft('');
+  };
+
+  const toggleAttachmentMenu = () => {
+    if (attachmentOpen) {
+      setAttachmentOpen(false);
+      return;
+    }
+    const fallbackHeight = Math.min(340, Math.round(baseViewportHeightRef.current * 0.38));
+    setAttachmentHeight(Math.max(240, keyboardHeightRef.current || fallbackHeight));
+    setAttachmentOpen(true);
+    composerInputRef.current?.blur();
+  };
+
+  const sendSelectedFile = (kind, files) => {
+    const selectedFiles = Array.from(files ?? []);
+    if (!selectedFiles.length) return;
+    const additionalCount = selectedFiles.length > 1 ? ` 외 ${selectedFiles.length - 1}개` : '';
+    appendOutgoingMessage(`${kind} · ${selectedFiles[0].name}${additionalCount}`);
+    setAttachmentOpen(false);
+  };
+
+  const prepareAttachmentDraft = (text) => {
+    setDraft(text);
+    setAttachmentOpen(false);
+    window.requestAnimationFrame(() => composerInputRef.current?.focus());
   };
 
   const inviteParticipants = (selectedMembers, customName) => {
@@ -3177,7 +3450,11 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
   };
 
   return (
-    <section className="message-room-screen" aria-label={`${roomTitle} 대화방`}>
+    <section
+      className="message-room-screen"
+      aria-label={`${roomTitle} 대화방`}
+      style={{ '--message-viewport-height': `${roomViewport.height}px`, '--message-viewport-top': `${roomViewport.top}px` }}
+    >
       <header className={`message-room-header ${searchOpen ? 'is-searching' : ''}`}>
         {searchOpen ? (
           <>
@@ -3210,7 +3487,7 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
               <div><strong>{roomTitle}</strong><span>{participants.length}명</span></div>
             </div>
             <div className="message-room-actions">
-              <button className="chat-icon-button" type="button" aria-label="대화 검색" onClick={() => setSearchOpen(true)}>
+              <button className="chat-icon-button" type="button" aria-label="대화 검색" onClick={() => { setAttachmentOpen(false); setSearchOpen(true); }}>
                 <Search size={21} aria-hidden="true" />
               </button>
               <button className="chat-icon-button" type="button" aria-label="대화방 메뉴" onClick={() => setMenuOpen(true)}>
@@ -3249,17 +3526,37 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
       </div>
 
       {!searchOpen && (
-        <form className="message-composer" onSubmit={sendMessage}>
-          <input
-            aria-label="메시지 입력"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="메시지를 입력하세요"
-          />
-          <button type="submit" aria-label="메시지 보내기" disabled={!draft.trim()}>
+        <form className={`message-composer ${attachmentOpen ? 'is-attachment-open' : ''}`} onSubmit={sendMessage}>
+          <button className="message-composer-add" type="button" aria-label={attachmentOpen ? '첨부 메뉴 닫기' : '첨부 메뉴 열기'} aria-expanded={attachmentOpen} onClick={toggleAttachmentMenu}>
+            <Plus size={22} aria-hidden="true" />
+          </button>
+          <label className="message-composer-input">
+            <input
+              ref={composerInputRef}
+              aria-label="메시지 입력"
+              value={draft}
+              onFocus={() => setAttachmentOpen(false)}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder="메시지를 입력하세요"
+            />
+          </label>
+          <button className="message-composer-send" type="submit" aria-label="메시지 보내기" disabled={!draft.trim()}>
             <Send size={18} aria-hidden="true" />
           </button>
         </form>
+      )}
+
+      {!searchOpen && attachmentOpen && (
+        <section className="message-attachment-panel" style={{ '--attachment-panel-height': `${attachmentHeight}px` }} aria-label="첨부 메뉴">
+          <div className="message-attachment-grid">
+            <button type="button" onClick={() => photoInputRef.current?.click()}><span><ImageIcon size={23} aria-hidden="true" /></span><strong>사진</strong></button>
+            <button type="button" onClick={() => fileInputRef.current?.click()}><span><FileText size={23} aria-hidden="true" /></span><strong>파일</strong></button>
+            <button type="button" onClick={() => prepareAttachmentDraft('음성 메시지')}><span><Mic size={23} aria-hidden="true" /></span><strong>음성</strong></button>
+            <button type="button" onClick={() => prepareAttachmentDraft('말씀 · 빌립보서 4:6')}><span><BookOpen size={23} aria-hidden="true" /></span><strong>말씀</strong></button>
+          </div>
+          <input ref={photoInputRef} className="message-hidden-file" type="file" accept="image/*" multiple onChange={(event) => { sendSelectedFile('사진', event.target.files); event.target.value = ''; }} />
+          <input ref={fileInputRef} className="message-hidden-file" type="file" multiple onChange={(event) => { sendSelectedFile('파일', event.target.files); event.target.value = ''; }} />
+        </section>
       )}
 
       {menuOpen && (
@@ -3478,16 +3775,25 @@ function MonthHeatmapGrid({ activityMonth }) {
 }
 
 function HeatmapHistorySheet({ onClose }) {
+  const scrollRef = useRef(null);
   const activityMonths = useMemo(() => (
-    Array.from({ length: 12 }, (_, index) => buildMonthActivity(-index))
+    Array.from({ length: 12 }, (_, index) => buildMonthActivity(index - 11))
   ), []);
+
+  useLayoutEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      const scrollContainer = scrollRef.current;
+      if (scrollContainer) scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, []);
 
   return (
     <div className="heatmap-history-layer">
       <button className="heatmap-history-backdrop" type="button" aria-label="말씀 기록 닫기" onClick={onClose} />
       <section className="heatmap-history-sheet" role="dialog" aria-modal="true" aria-labelledby="heatmap-history-title">
         <header><div><h2 id="heatmap-history-title">말씀 기록</h2><p>최근 12개월</p></div><button type="button" aria-label="말씀 기록 닫기" onClick={onClose}><X size={21} /></button></header>
-        <div className="heatmap-history-scroll">
+        <div className="heatmap-history-scroll" ref={scrollRef}>
           {activityMonths.map((month) => (
             <article key={month.id}>
               <h3>{month.label}</h3>
