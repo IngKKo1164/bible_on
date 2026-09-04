@@ -357,7 +357,7 @@ const COMMUNITY_TYPE_LABELS = {
   church: '교회',
   club: '동아리',
   small_group: '소모임',
-  community: '공동체',
+  community: '기타',
 };
 
 function getCommunityTypeLabel(community) {
@@ -5277,6 +5277,7 @@ function ChurchView({
   const [worshipMemoOpen, setWorshipMemoOpen] = useState(false);
   const [churchRegistrationOpen, setChurchRegistrationOpen] = useState(false);
   const [churchAdminRegistrationOpen, setChurchAdminRegistrationOpen] = useState(false);
+  const [communityEntryMenuOpen, setCommunityEntryMenuOpen] = useState(false);
   const [leaveChurchConfirmOpen, setLeaveChurchConfirmOpen] = useState(false);
   const [leaveRestriction, setLeaveRestriction] = useState('');
   const [selectedAnnouncement, setSelectedAnnouncement] = useState(null);
@@ -5415,7 +5416,7 @@ function ChurchView({
       <div className="page-stack church-empty-page">
         <section className="church-empty-state">
           <strong>참여 중인 공동체가 없어요</strong>
-          <p>교회뿐 아니라 동아리와 소모임도 함께할 수 있어요.</p>
+          <p>교회, 동아리, 소모임과 그 밖의 모임도 함께할 수 있어요.</p>
           <div className="church-empty-actions">
             <button type="button" onClick={() => setChurchRegistrationOpen(true)}>공동체 추가하기</button>
             <button className="is-secondary" type="button" onClick={() => setChurchAdminRegistrationOpen(true)}>
@@ -5445,20 +5446,31 @@ function ChurchView({
   return (
     <div className="page-stack">
       <section className="community-switcher" aria-label="공동체 전환">
-        <div className="community-switcher-track">
-          {communities.map((community) => (
+        {Array.from({ length: MAX_COMMUNITIES }, (_, index) => {
+          const community = communities[index];
+          return community ? (
             <button
               className={community.id === currentChurchId ? 'is-active' : ''}
               type="button"
               key={community.id}
+              aria-pressed={community.id === currentChurchId}
               onClick={() => onSelectCommunity(community.id)}
             >
-              <span>{community.name}</span>
-              <small>{getCommunityTypeLabel(community)}</small>
+              <strong>{community.name}</strong>
+              <span>{getCommunityTypeLabel(community)}</span>
             </button>
-          ))}
-        </div>
-        <span>{communities.length} / {MAX_COMMUNITIES}</span>
+          ) : (
+            <button
+              className="is-empty"
+              type="button"
+              key={`empty-community-${index}`}
+              aria-label="공동체 추가 또는 만들기"
+              onClick={() => setCommunityEntryMenuOpen(true)}
+            >
+              <Plus size={17} aria-hidden="true" />
+            </button>
+          );
+        })}
       </section>
 
       <section className="church-summary">
@@ -5552,11 +5564,6 @@ function ChurchView({
         <button type="button" onClick={() => setDepartmentDirectoryOpen(true)}><span><strong>부서</strong><small>{churchInfo.department} 구성원과 일정을 확인해요</small></span><ChevronRight size={18} /></button>
       </section>
 
-      <div className="community-membership-actions">
-        <button type="button" disabled={communities.length >= MAX_COMMUNITIES} onClick={() => setChurchRegistrationOpen(true)}><UserPlus size={15} />공동체 추가</button>
-        <button type="button" disabled={communities.length >= MAX_COMMUNITIES} onClick={() => setChurchAdminRegistrationOpen(true)}><Plus size={15} />공동체 만들기</button>
-      </div>
-
       <div className="church-account-actions">
         <button
           className="church-management-entry"
@@ -5579,6 +5586,13 @@ function ChurchView({
       </div>
 
       {communityNoticeOpen && <ChurchReadyNotice onClose={() => setCommunityNoticeOpen(false)} />}
+      {communityEntryMenuOpen && (
+        <CommunityEntrySheet
+          onClose={() => setCommunityEntryMenuOpen(false)}
+          onJoin={() => setChurchRegistrationOpen(true)}
+          onCreate={() => setChurchAdminRegistrationOpen(true)}
+        />
+      )}
       {churchRegistrationOpen && (
         <ChurchRegistrationSheet
           churchProfiles={churchProfiles}
@@ -5804,6 +5818,34 @@ function ChurchReadyNotice({ onClose, title = '출시 준비중', description = 
   );
 }
 
+function CommunityEntrySheet({ onClose, onJoin, onCreate }) {
+  const { isClosing, dismiss } = useSlideDismiss(onClose);
+
+  return (
+    <div className={`church-registration-layer community-entry-layer ${isClosing ? 'is-closing' : ''}`}>
+      <button className="church-registration-backdrop" type="button" aria-label="공동체 메뉴 닫기" onClick={() => dismiss()} />
+      <section className="church-registration-sheet community-entry-sheet" role="dialog" aria-modal="true" aria-labelledby="community-entry-title">
+        <header>
+          <div><h2 id="community-entry-title">공동체</h2><p>참여할 공동체를 찾거나 새로 만들 수 있어요.</p></div>
+          <button type="button" aria-label="공동체 메뉴 닫기" onClick={() => dismiss()}><X size={20} /></button>
+        </header>
+        <div className="community-entry-actions">
+          <button type="button" onClick={() => dismiss(onJoin)}>
+            <span><UserPlus size={19} aria-hidden="true" /></span>
+            <span><strong>공동체 추가</strong><small>이미 만들어진 공동체를 찾아 참여해요</small></span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => dismiss(onCreate)}>
+            <span><Plus size={19} aria-hidden="true" /></span>
+            <span><strong>공동체 만들기</strong><small>교회, 동아리, 소모임과 기타 모임을 시작해요</small></span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ChurchRegistrationSheet({ churchProfiles, onClose, onRegister, onSearchChurches }) {
   const [query, setQuery] = useState('');
   const [selectedChurch, setSelectedChurch] = useState(null);
@@ -5894,7 +5936,7 @@ function ChurchRegistrationSheet({ churchProfiles, onClose, onRegister, onSearch
 
 function ChurchAdminRegistrationSheet({ onClose, onCreate }) {
   const [churchName, setChurchName] = useState('');
-  const [communityType, setCommunityType] = useState('small_group');
+  const [communityType, setCommunityType] = useState('church');
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const { isClosing, dismiss } = useSlideDismiss(onClose);
@@ -5932,7 +5974,7 @@ function ChurchAdminRegistrationSheet({ onClose, onCreate }) {
             <input autoFocus maxLength={80} value={churchName} onChange={(event) => setChurchName(event.target.value)} placeholder="공동체 이름을 입력해 주세요" />
           </label>
           <div className="community-type-picker" role="radiogroup" aria-label="공동체 유형">
-            {Object.entries({ church: '교회', club: '동아리', small_group: '소모임' }).map(([id, label]) => (
+            {Object.entries({ church: '교회', club: '동아리', small_group: '소모임', community: '기타' }).map(([id, label]) => (
               <button className={communityType === id ? 'is-selected' : ''} type="button" role="radio" aria-checked={communityType === id} key={id} onClick={() => setCommunityType(id)}>{label}</button>
             ))}
           </div>
@@ -6455,22 +6497,32 @@ function ChurchManagementScreen({
         {mode === 'settings' && isChurchAdministrator && (
           <div className="church-admin-settings">
             <section className="church-admin-setting-card church-profile-setting-card">
-              <header><span><Users size={19} aria-hidden="true" /></span><div><strong>공동체 프로필</strong><small>공동체 탭과 검색에 함께 표시됩니다.</small></div></header>
-              <div className="church-profile-photo-setting">
+              <header className="church-profile-setting-heading">
+                <div><strong>공동체 프로필</strong><small>공동체 탭과 검색에 함께 표시됩니다.</small></div>
+                <span>{getCommunityTypeLabel(churchProfileDraft)}</span>
+              </header>
+              <div className="church-profile-identity">
                 <span className={`church-profile-preview ${churchProfileDraft.profileImage ? 'has-image' : ''}`}>
-                  {churchProfileDraft.profileImage ? <img src={churchProfileDraft.profileImage} alt="" /> : <Church size={26} aria-hidden="true" />}
+                  {churchProfileDraft.profileImage ? <img src={churchProfileDraft.profileImage} alt="" /> : <Users size={28} aria-hidden="true" />}
                 </span>
                 <div>
-                  <label><Camera size={16} aria-hidden="true" />프로필 사진 변경<input type="file" accept="image/*" onChange={loadChurchProfileImage} /></label>
-                  {churchProfileDraft.profileImage && <button type="button" onClick={() => setChurchProfileDraft((current) => ({ ...current, profileImage: '', profileImagePath: '', _profileImageFile: null }))}>기본 이미지</button>}
+                  <strong>{churchProfileDraft.name}</strong>
+                  <small>{getCommunityTypeLabel(churchProfileDraft)} 프로필</small>
+                  <div className="church-profile-photo-actions">
+                    <label><Camera size={15} aria-hidden="true" />사진 변경<input type="file" accept="image/*" onChange={loadChurchProfileImage} /></label>
+                    {churchProfileDraft.profileImage && <button type="button" onClick={() => setChurchProfileDraft((current) => ({ ...current, profileImage: '', profileImagePath: '', _profileImageFile: null }))}>기본 이미지</button>}
+                  </div>
                 </div>
               </div>
               {churchProfileImageError && <p className="church-profile-error" role="alert">{churchProfileImageError}</p>}
-              <button className="church-profile-verse-trigger" type="button" onClick={() => setChurchVersePickerOpen(true)}>
-                <BookOpen size={18} aria-hidden="true" />
-                <span><strong>{churchProfileDraft.verseRef}</strong><small>{churchProfileDraft.representativeVerse}</small></span>
-                <ChevronRight size={18} aria-hidden="true" />
-              </button>
+              <div className="church-profile-verse-field">
+                <span>대표 말씀</span>
+                <button className="church-profile-verse-trigger" type="button" onClick={() => setChurchVersePickerOpen(true)}>
+                  <BookOpen size={18} aria-hidden="true" />
+                  <span><strong>{churchProfileDraft.verseRef || '말씀 선택'}</strong><small>{churchProfileDraft.representativeVerse || '공동체를 소개할 말씀을 골라 주세요.'}</small></span>
+                  <ChevronRight size={18} aria-hidden="true" />
+                </button>
+              </div>
               <button className="church-profile-save" type="button" onClick={saveChurchProfile}>공동체 프로필 저장</button>
             </section>
             <section className="church-admin-setting-card">
