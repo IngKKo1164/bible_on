@@ -7,22 +7,6 @@ function getRedirectUrl() {
   return new URL('/onboarding', window.location.origin).toString();
 }
 
-export async function signUpWithEmail({ email, password, displayName }) {
-  if (!isSupabaseConfigured) return { mode: 'preview', user: null, session: null };
-  const client = requireSupabase();
-  const { data, error } = await client.auth.signUp({
-    email,
-    password,
-    options: {
-      emailRedirectTo: getRedirectUrl(),
-      data: { display_name: displayName },
-    },
-  });
-  if (error) throw error;
-  if (data.user && data.session) setActivePersistenceUser(data.user.id);
-  return { mode: 'supabase', ...data };
-}
-
 export async function signInWithEmail({ email, password }) {
   if (!isSupabaseConfigured) return { mode: 'preview', user: null, session: null };
   const client = requireSupabase();

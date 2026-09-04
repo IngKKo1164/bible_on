@@ -23,7 +23,6 @@ import {
   sendPasswordReset,
   signInWithEmail,
   signInWithSocialProvider,
-  signUpWithEmail,
 } from './data/repositories/authRepository';
 import { readStoredValue, writeStoredValue } from './data/repositories/persistenceRepository';
 import { accountRepository } from './data/repositories/accountRepository';
@@ -60,7 +59,7 @@ function OnboardingApp() {
   const [authUser, setAuthUser] = useState(null);
   const [formError, setFormError] = useState('');
   const [unregisteredChurchName, setUnregisteredChurchName] = useState('');
-  const [form, setForm] = useState({ name: '', email: '', password: '', agreed: false });
+  const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [churchProfiles] = useState(() => readStoredValue(CHURCH_PROFILES_STORAGE_KEY, {}));
   const [profile, setProfile] = useState({
     churchStatus: '',
@@ -154,49 +153,6 @@ function OnboardingApp() {
     }
   };
 
-  const submitEmailSignup = async (event) => {
-    event.preventDefault();
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (form.name.trim().length < 2) {
-      setFormError('이름을 두 글자 이상 입력해 주세요.');
-      return;
-    }
-    if (!emailPattern.test(form.email)) {
-      setFormError('이메일 주소를 확인해 주세요.');
-      return;
-    }
-    if (form.password.length < 8 || !/[A-Za-z]/.test(form.password) || !/\d/.test(form.password)) {
-      setFormError('비밀번호는 영문과 숫자를 포함해 8자 이상 입력해 주세요.');
-      return;
-    }
-    if (!form.agreed) {
-      setFormError('필수 약관에 동의해 주세요.');
-      return;
-    }
-    setFormError('');
-    setAuthNotice('');
-    setAuthPending(true);
-    try {
-      const result = await signUpWithEmail({
-        email: form.email.trim(),
-        password: form.password,
-        displayName: form.name.trim(),
-      });
-      if (result.mode === 'preview') {
-        beginTutorial('email');
-      } else if (result.session) {
-        setAuthUser(result.user);
-        beginTutorial('email');
-      } else {
-        setAuthNotice('확인 메일을 보냈어요. 이메일 인증 후 이 화면으로 돌아와 주세요.');
-      }
-    } catch (error) {
-      setFormError(error?.message || '회원가입을 완료하지 못했어요.');
-    } finally {
-      setAuthPending(false);
-    }
-  };
-
   const submitEmailSignin = async (event) => {
     event.preventDefault();
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -239,7 +195,7 @@ function OnboardingApp() {
   };
 
   const goBack = () => {
-    if (screen === 'email' || screen === 'signin') {
+    if (screen === 'signin') {
       setFormError('');
       setScreen('signup');
       return;
@@ -356,7 +312,7 @@ function OnboardingApp() {
     <main className="onboarding-root">
       <section className="onboarding-shell" aria-label="바이블온 회원가입 및 튜토리얼">
         <header className="onboarding-header">
-          {screen === 'email' || screen === 'signin' || screen === 'tutorial' ? (
+          {screen === 'signin' || screen === 'tutorial' ? (
             <button className="onboarding-icon-button" type="button" aria-label="이전" onClick={goBack}>
               <ArrowLeft size={21} aria-hidden="true" />
             </button>
@@ -384,12 +340,6 @@ function OnboardingApp() {
 
             {formError && <p className="form-error" role="alert">{formError}</p>}
 
-            <div className="signup-divider"><span>또는</span></div>
-
-            <button className="email-signup-button" type="button" onClick={() => setScreen('email')}>
-              이메일로 직접 가입하기<ChevronRight size={18} aria-hidden="true" />
-            </button>
-
             <button className="existing-account-button" type="button" onClick={() => {
               setFormError('');
               setAuthNotice('');
@@ -400,70 +350,6 @@ function OnboardingApp() {
 
             <p className="auth-legal">계속하면 바이블온 이용약관과 개인정보 처리방침에 동의하게 됩니다.</p>
           </div>
-        )}
-
-        {screen === 'email' && (
-          <form className="email-signup-view" onSubmit={submitEmailSignup} noValidate>
-            <div className="flow-heading">
-              <span>직접 회원가입</span>
-              <h1>기본 정보를 입력해 주세요</h1>
-            </div>
-
-            <div className="signup-fields">
-              <label className="signup-field">
-                <span>이름</span>
-                <input
-                  autoComplete="name"
-                  value={form.name}
-                  onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                  placeholder="이름을 입력해 주세요"
-                />
-              </label>
-              <label className="signup-field">
-                <span>이메일</span>
-                <input
-                  autoComplete="email"
-                  inputMode="email"
-                  type="email"
-                  value={form.email}
-                  onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
-                  placeholder="name@example.com"
-                />
-              </label>
-              <label className="signup-field">
-                <span>비밀번호</span>
-                <div className="password-input">
-                  <input
-                    autoComplete="new-password"
-                    type={showPassword ? 'text' : 'password'}
-                    value={form.password}
-                    onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
-                    placeholder="영문과 숫자 포함 8자 이상"
-                  />
-                  <button type="button" aria-label={showPassword ? '비밀번호 숨기기' : '비밀번호 보기'} onClick={() => setShowPassword((current) => !current)}>
-                    {showPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
-                  </button>
-                </div>
-              </label>
-            </div>
-
-            <label className="terms-check">
-              <input
-                checked={form.agreed}
-                type="checkbox"
-                onChange={(event) => setForm((current) => ({ ...current, agreed: event.target.checked }))}
-              />
-              <span>이용약관 및 개인정보 처리방침에 동의합니다. <b>필수</b></span>
-            </label>
-
-            {formError && <p className="form-error" role="alert">{formError}</p>}
-
-            {authNotice && <p className="form-notice" role="status">{authNotice}</p>}
-
-            <button className="onboarding-primary-button" type="submit" disabled={authPending}>
-              {authPending ? '계정을 준비하고 있어요' : '가입하고 계속하기'}
-            </button>
-          </form>
         )}
 
         {screen === 'signin' && (

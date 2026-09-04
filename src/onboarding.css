@@ -174,24 +174,6 @@ body.onboarding-body #root {
   filter: brightness(0.97);
 }
 
-.signup-divider {
-  align-items: center;
-  color: #9aa2ad;
-  display: flex;
-  font-size: 11px;
-  gap: 12px;
-  margin: 18px 0;
-}
-
-.signup-divider::before,
-.signup-divider::after {
-  background: #e1e4e8;
-  content: '';
-  flex: 1;
-  height: 1px;
-}
-
-.email-signup-button,
 .onboarding-primary-button {
   align-items: center;
   background: #4b4298;
@@ -205,13 +187,6 @@ body.onboarding-body #root {
   min-height: 50px;
   padding: 0 16px;
   width: 100%;
-}
-
-.email-signup-button {
-  background: #fff;
-  border: 1px solid #e1e4e8;
-  color: #4b4298;
-  justify-content: space-between;
 }
 
 .existing-account-button,
@@ -333,29 +308,6 @@ body.onboarding-body #root {
   justify-content: center;
   padding: 0;
   width: 44px;
-}
-
-.terms-check {
-  align-items: flex-start;
-  color: #5c6674;
-  display: grid;
-  font-size: 11px;
-  gap: 9px;
-  grid-template-columns: 18px minmax(0, 1fr);
-  line-height: 1.55;
-  margin: 18px 0 8px;
-}
-
-.terms-check input {
-  accent-color: #4b4298;
-  height: 17px;
-  margin: 0;
-  width: 17px;
-}
-
-.terms-check b {
-  color: #4b4298;
-  font-size: 10px;
 }
 
 .form-error {
