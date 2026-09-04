@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { createPortal } from 'react-dom';
 import {
   Award,
   Bell,
@@ -2249,7 +2250,7 @@ function Topbar({
         </div>
       </header>
 
-      {settingsOpen && (
+      {settingsOpen && createPortal(
         <div className={`global-settings-layer ${settingsClosing ? 'is-closing' : ''}`}>
           <button className="global-settings-backdrop" type="button" aria-label="설정 닫기" onClick={closeSettings} />
           <aside className="global-settings-drawer" aria-label="설정">
@@ -2412,7 +2413,8 @@ function Topbar({
               </div>
             </div>
           </aside>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
