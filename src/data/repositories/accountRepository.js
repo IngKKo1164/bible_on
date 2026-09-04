@@ -11,6 +11,7 @@ import { accountCache } from './accountCache.js';
 
 const PROFILE_KEY = 'bibleon.personalProfile';
 const PREFERENCE_KEYS = [
+  'bibleon.accountOnboardingV1',
   'bibleon.defaultTranslation',
   'bibleon.themePreference',
   'bibleon.themeControlMode',
@@ -180,6 +181,7 @@ async function migrateLocalAccountFoundation(client, user) {
   if (preferencesResult.error) throw preferencesResult.error;
 
   const localProfile = accountCache.read(PROFILE_KEY, {}, { userId: user.id });
+  const localOnboarding = accountCache.read('bibleon.accountOnboardingV1', {}, { userId: user.id });
   const localThemePreference = accountCache.read('bibleon.themePreference', 'system', { userId: user.id });
   const localThemeControlMode = accountCache.read(
     'bibleon.themeControlMode',
@@ -212,7 +214,7 @@ async function migrateLocalAccountFoundation(client, user) {
       dark_mode_start: accountCache.read('bibleon.darkModeStart', remotePreferences.dark_mode_start || '21:00', { userId: user.id }),
       dark_mode_end: accountCache.read('bibleon.darkModeEnd', remotePreferences.dark_mode_end || '07:00', { userId: user.id }),
       timezone: remotePreferences.timezone || 'Asia/Seoul',
-      onboarding: remotePreferences.onboarding ?? {},
+      onboarding: { ...localOnboarding, ...(remotePreferences.onboarding ?? {}) },
     }, { onConflict: 'user_id' }),
   ]);
   const writeError = profileWrite.error || preferencesWrite.error;

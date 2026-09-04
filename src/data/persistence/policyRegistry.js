@@ -1,4 +1,5 @@
 const ACCOUNT_KEYS = [
+  'bibleon.accountOnboardingV1',
   'bibleon.achievementsV1',
   'bibleon.activeHomeChatV1',
   'bibleon.darkModeEnd',
@@ -79,4 +80,3 @@ export function getKeysByAuthority(authority) {
 export function keySuffix(key) {
   return key.startsWith('bibleon.') ? key.slice('bibleon.'.length) : key;
 }
-

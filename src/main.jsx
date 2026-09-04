@@ -300,6 +300,33 @@ function resolveBibleReference(reference) {
   return { bookId: book.id, chapter: Number(numbers[1]), verse: Number(numbers[2]) };
 }
 
+function normalizeMemoViewMode(value) {
+  return ['grid', 'list'].includes(value) ? value : 'grid';
+}
+
+function RepresentativeVerseText({ reference, fallbackText = '', translationId }) {
+  const [text, setText] = useState(fallbackText);
+
+  useEffect(() => {
+    let active = true;
+    const target = resolveBibleReference(reference);
+    setText(fallbackText);
+    if (!target || !translationId) return () => { active = false; };
+
+    loadBibleChapter(translationId, target.bookId, target.chapter)
+      .then((verses) => {
+        if (!active) return;
+        const verse = verses.find((item) => Number(String(item.label ?? item.verse).split('-')[0]) === target.verse);
+        if (verse?.text) setText(verse.text);
+      })
+      .catch(() => {});
+
+    return () => { active = false; };
+  }, [fallbackText, reference, translationId]);
+
+  return text;
+}
+
 const weeklyPlan = {
   service: '주일 2부 예배',
   theme: '염려보다 큰 평안',
@@ -827,6 +854,34 @@ const HOME_CHAT_STORAGE_KEY = 'bibleon.homeChatRoomsV1';
 const HOME_CHAT_ACTIVE_KEY = 'bibleon.activeHomeChatV1';
 const HOME_CHAT_LEGACY_KEY = 'bibleon.homeTestMessagesV2';
 const HOME_CHAT_DELETE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const ACCOUNT_ONBOARDING_STORAGE_KEY = 'bibleon.accountOnboardingV1';
+const APP_TUTORIAL_STEPS = [
+  {
+    target: 'home-chatbot',
+    title: '바이블온에게 묻기',
+    description: '말씀을 찾거나 마음을 나누고 싶을 때 이곳에 편하게 질문하세요.',
+  },
+  {
+    target: 'chat-history',
+    title: '지난 대화',
+    description: '이전에 나눈 대화를 다시 열거나 새 대화를 시작할 수 있어요.',
+  },
+  {
+    target: 'recent-passages',
+    title: '최근 읽은 성경',
+    description: '최근 읽던 책과 장을 좌우로 살펴보고 곧바로 이어 읽을 수 있어요.',
+  },
+  {
+    target: 'verse-interactions',
+    title: '절 상호작용',
+    description: '길게 누르면 메모·강조·전달·분석이 열리고, 두 번 탭하면 읽음으로 표시돼요.',
+  },
+  {
+    target: 'bible-switcher',
+    title: '성경 전환',
+    description: '책과 장을 빠르게 바꾸고 원하는 번역으로 읽을 수 있어요.',
+  },
+];
 
 function makeHomeChatTitle(messages) {
   const firstQuestion = messages.find(({ role }) => role === 'user')?.text?.trim() ?? '';
@@ -1080,6 +1135,13 @@ function App() {
   const [selectedTranslation, setSelectedTranslation] = useState(() => (
     readStoredValue('bibleon.defaultTranslation', 'KRV')
   ));
+  const [accountOnboarding, setAccountOnboarding] = useState(() => (
+    readStoredValue(ACCOUNT_ONBOARDING_STORAGE_KEY, {})
+  ));
+  const [memoViewMode, setMemoViewMode] = useState(() => normalizeMemoViewMode(
+    readStoredValue(ACCOUNT_ONBOARDING_STORAGE_KEY, {}).memoViewMode
+  ));
+  const [appTutorialStep, setAppTutorialStep] = useState(null);
   const [selectedRef, setSelectedRef] = useState('빌립보서 4:6');
   const [favoriteRefs] = useState(['시편 23:1']);
   const [readVerseIds, setReadVerseIds] = useState(() => readStoredValue(READ_VERSES_STORAGE_KEY, [
@@ -1171,6 +1233,12 @@ function App() {
         }
         setPersonalProfile((current) => ({ ...current, ...profile }));
       }
+      const localOnboarding = readStoredValue(ACCOUNT_ONBOARDING_STORAGE_KEY, {});
+      const remoteOnboarding = account.preferences?.onboarding ?? {};
+      const mergedOnboarding = { ...localOnboarding, ...remoteOnboarding };
+      setAccountOnboarding(mergedOnboarding);
+      setMemoViewMode(normalizeMemoViewMode(mergedOnboarding.memoViewMode));
+      setAppTutorialStep(mergedOnboarding.appTutorialCompletedAt ? null : 0);
       if (account.preferences) {
         const preference = account.preferences;
         if (['KRV', 'RNKSV'].includes(preference.defaultTranslation)) {
@@ -1413,6 +1481,39 @@ function App() {
     });
   };
 
+  useEffect(() => {
+    if (appTutorialStep === null) return;
+    const tutorialTab = appTutorialStep >= 2 ? 'bible' : 'home';
+    setMessageFriendsMenuOpen(false);
+    setIsHomeChatOpen(false);
+    setActiveTab(tutorialTab);
+    window.requestAnimationFrame(() => {
+      workspaceRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+    });
+  }, [appTutorialStep]);
+
+  const completeAppTutorial = () => {
+    const completedAt = new Date().toISOString();
+    const nextOnboarding = {
+      ...accountOnboarding,
+      memoViewMode,
+      appTutorialCompletedAt: completedAt,
+    };
+    setAccountOnboarding(nextOnboarding);
+    setAppTutorialStep(null);
+    if (accountSyncReady) {
+      void accountRepository.savePreferences({
+        defaultTranslation: selectedTranslation,
+        themePreference,
+        themeControlMode,
+        darkModeStart,
+        darkModeEnd,
+        timezone: 'Asia/Seoul',
+        onboarding: nextOnboarding,
+      }).catch(() => {});
+    }
+  };
+
   const recordVerseRead = (verse) => {
     const dateKey = getSeoulDateKey();
     setPopularityData((current) => ({
@@ -1617,10 +1718,23 @@ function App() {
         darkModeStart,
         darkModeEnd,
         timezone: 'Asia/Seoul',
+        onboarding: accountOnboarding,
       }).catch(() => {});
     }, 450);
     return () => window.clearTimeout(timerId);
-  }, [accountSyncReady, darkModeEnd, darkModeStart, selectedTranslation, themeControlMode, themePreference]);
+  }, [accountOnboarding, accountSyncReady, darkModeEnd, darkModeStart, selectedTranslation, themeControlMode, themePreference]);
+
+  useEffect(() => {
+    writeStoredValue(ACCOUNT_ONBOARDING_STORAGE_KEY, accountOnboarding);
+  }, [accountOnboarding]);
+
+  const updateMemoViewMode = (nextMode) => {
+    const normalizedMode = normalizeMemoViewMode(nextMode);
+    setMemoViewMode(normalizedMode);
+    setAccountOnboarding((current) => (
+      current.memoViewMode === normalizedMode ? current : { ...current, memoViewMode: normalizedMode }
+    ));
+  };
 
   useEffect(() => {
     writeStoredValue(CURRENT_CHURCH_STORAGE_KEY, currentChurchId);
@@ -1948,6 +2062,8 @@ function App() {
             setVerseNotes={setVerseNotes}
             verseNoteMeta={verseNoteMeta}
             setVerseNoteMeta={setVerseNoteMeta}
+            memoViewMode={memoViewMode}
+            onMemoViewModeChange={updateMemoViewMode}
             popularityRankings={popularityRankings}
             onOpenBibleVerse={openBibleVerse}
           />
@@ -2025,6 +2141,7 @@ function App() {
             navigationTarget={messageNavigationTarget}
             onNavigationHandled={() => setMessageNavigationTarget(null)}
             members={messageMembers}
+            selectedTranslation={selectedTranslation}
             serverBacked={Boolean(currentAccountUser)}
             onReloadMessages={() => refreshSharedData().catch(() => {})}
           />
@@ -2059,6 +2176,16 @@ function App() {
         activeTab={activeTab === 'home' && isHomeChatOpen ? null : activeTab}
         onSelectTab={selectTab}
       />
+      {appTutorialStep !== null && !isAppLoading && !isHomeIntro && !isHomeReturning && (
+        <AppTutorial
+          step={appTutorialStep}
+          onNext={() => {
+            if (appTutorialStep >= APP_TUTORIAL_STEPS.length - 1) completeAppTutorial();
+            else setAppTutorialStep((current) => current + 1);
+          }}
+          onSkip={completeAppTutorial}
+        />
+      )}
       {completionCelebration && (
         <BibleCompletionCelebration
           achievement={completionCelebration}
@@ -2195,6 +2322,7 @@ function Topbar({
       <header className="topbar">
         <button
           className="icon-button topbar-history-button"
+          data-tutorial="chat-history"
           type="button"
           aria-label={primaryMenuLabel}
           title={primaryMenuTitle}
@@ -2627,6 +2755,96 @@ function BottomNav({ activeTab, onSelectTab }) {
   );
 }
 
+function AppTutorial({ step, onNext, onSkip }) {
+  const [spotlight, setSpotlight] = useState(null);
+  const currentStep = APP_TUTORIAL_STEPS[step] ?? APP_TUTORIAL_STEPS[0];
+
+  useLayoutEffect(() => {
+    let hasScrolled = false;
+    let settleTimerId;
+    const syncSpotlight = () => {
+      const shell = document.querySelector('.app-shell');
+      const target = document.querySelector(`[data-tutorial="${currentStep.target}"]`);
+      if (!shell || !target) {
+        setSpotlight(null);
+        return;
+      }
+
+      const shellRect = shell.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      if (!hasScrolled && (targetRect.top < shellRect.top + 66 || targetRect.bottom > shellRect.bottom - 92)) {
+        hasScrolled = true;
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        settleTimerId = window.setTimeout(syncSpotlight, 260);
+      }
+
+      const padding = currentStep.target === 'verse-interactions' ? 5 : 8;
+      const left = Math.max(8, targetRect.left - shellRect.left - padding);
+      const top = Math.max(8, targetRect.top - shellRect.top - padding);
+      const width = Math.min(shellRect.width - left - 8, targetRect.width + (padding * 2));
+      const height = Math.min(shellRect.height - top - 8, targetRect.height + (padding * 2));
+      const bubbleWidth = Math.min(326, shellRect.width - 28);
+      const estimatedBubbleHeight = 174;
+      const belowTop = top + height + 14;
+      const bubbleTop = belowTop + estimatedBubbleHeight <= shellRect.height - 12
+        ? belowTop
+        : Math.max(12, top - estimatedBubbleHeight - 14);
+      const bubbleLeft = Math.max(14, Math.min(
+        shellRect.width - bubbleWidth - 14,
+        left + (width / 2) - (bubbleWidth / 2)
+      ));
+
+      setSpotlight({ left, top, width, height, bubbleLeft, bubbleTop, bubbleWidth });
+    };
+
+    syncSpotlight();
+    const intervalId = window.setInterval(syncSpotlight, 90);
+    window.addEventListener('resize', syncSpotlight);
+    window.addEventListener('scroll', syncSpotlight, true);
+    return () => {
+      window.clearInterval(intervalId);
+      window.clearTimeout(settleTimerId);
+      window.removeEventListener('resize', syncSpotlight);
+      window.removeEventListener('scroll', syncSpotlight, true);
+    };
+  }, [currentStep.target]);
+
+  return createPortal(
+    <div className="app-tutorial-layer" role="dialog" aria-modal="true" aria-labelledby="app-tutorial-title">
+      {spotlight && (
+        <>
+          <div
+            className="app-tutorial-spotlight"
+            style={{
+              left: spotlight.left,
+              top: spotlight.top,
+              width: spotlight.width,
+              height: spotlight.height,
+            }}
+            aria-hidden="true"
+          />
+          <section
+            className="app-tutorial-card"
+            style={{ left: spotlight.bubbleLeft, top: spotlight.bubbleTop, width: spotlight.bubbleWidth }}
+          >
+            <div className="app-tutorial-progress" aria-label={`튜토리얼 ${step + 1}/${APP_TUTORIAL_STEPS.length}`}>
+              {APP_TUTORIAL_STEPS.map((item, index) => <i className={index <= step ? 'is-active' : ''} key={item.target} />)}
+            </div>
+            <span>{step + 1} / {APP_TUTORIAL_STEPS.length}</span>
+            <h2 id="app-tutorial-title">{currentStep.title}</h2>
+            <p>{currentStep.description}</p>
+            <footer>
+              <button type="button" onClick={onSkip}>건너뛰기</button>
+              <button type="button" onClick={onNext}>{step === APP_TUTORIAL_STEPS.length - 1 ? '시작하기' : '다음'}</button>
+            </footer>
+          </section>
+        </>
+      )}
+    </div>,
+    document.body
+  );
+}
+
 function HomeView({
   selectedBook,
   selectedChapter,
@@ -2649,6 +2867,8 @@ function HomeView({
   setVerseNotes,
   verseNoteMeta,
   setVerseNoteMeta,
+  memoViewMode,
+  onMemoViewModeChange,
   popularityRankings,
   onOpenBibleVerse,
 }) {
@@ -2795,7 +3015,7 @@ function HomeView({
 
       <div className="home-content-cluster" ref={homeContentClusterRef}>
         <div className="home-search-sticky" ref={searchContainerRef}>
-          <form className="home-rag-search" role="search" onSubmit={submitQuestion}>
+          <form className="home-rag-search" data-tutorial="home-chatbot" role="search" onSubmit={submitQuestion}>
             <Search size={20} aria-hidden="true" />
             <textarea
               ref={questionInputRef}
@@ -2916,6 +3136,8 @@ function HomeView({
           setVerseNotes={setVerseNotes}
           verseNoteMeta={verseNoteMeta}
           setVerseNoteMeta={setVerseNoteMeta}
+          viewMode={memoViewMode}
+          onViewModeChange={onMemoViewModeChange}
           onClose={() => setIsMemoLibraryOpen(false)}
         />
       )}
@@ -2968,12 +3190,11 @@ function MemoEditorScreen({ verse, value, initialMode = 'view', onChange, onClos
   );
 }
 
-function MemoLibraryScreen({ verseNotes, setVerseNotes, verseNoteMeta, setVerseNoteMeta, onClose }) {
+function MemoLibraryScreen({ verseNotes, setVerseNotes, verseNoteMeta, setVerseNoteMeta, viewMode, onViewModeChange, onClose }) {
   const [sortMode, setSortMode] = useState(() => {
     const stored = readStoredValue('bibleon.memoSortMode', 'recent');
     return ['recent', 'oldest', 'genesis', 'revelation'].includes(stored) ? stored : 'recent';
   });
-  const [viewMode, setViewMode] = useState('grid');
   const [selectedMemoId, setSelectedMemoId] = useState('');
   const memoEntries = useMemo(() => {
     const entries = buildVerseMemoEntries(verseNotes, verseNoteMeta);
@@ -3035,8 +3256,8 @@ function MemoLibraryScreen({ verseNotes, setVerseNotes, verseNoteMeta, setVerseN
           <ChevronDown size={15} aria-hidden="true" />
         </label>
         <div className="memo-view-toggle" role="group" aria-label="메모 보기 기준">
-          <button className={viewMode === 'grid' ? 'is-active' : ''} type="button" aria-label="정사각형으로 보기" title="정사각형 보기" onClick={() => setViewMode('grid')}><Grid3X3 size={18} /></button>
-          <button className={viewMode === 'list' ? 'is-active' : ''} type="button" aria-label="한 줄 목록으로 보기" title="목록 보기" onClick={() => setViewMode('list')}><List size={19} /></button>
+          <button className={viewMode === 'grid' ? 'is-active' : ''} type="button" aria-label="정사각형으로 보기" title="정사각형 보기" onClick={() => onViewModeChange('grid')}><Grid3X3 size={18} /></button>
+          <button className={viewMode === 'list' ? 'is-active' : ''} type="button" aria-label="한 줄 목록으로 보기" title="목록 보기" onClick={() => onViewModeChange('list')}><List size={19} /></button>
         </div>
       </div>
       <div className={`memo-library-list is-${viewMode}`}>
@@ -4056,7 +4277,7 @@ function BibleView({
 
   return (
     <div className="page-stack bible-page">
-      <section className="recent-reading" aria-label="최근 읽은 성경">
+      <section className="recent-reading" data-tutorial="recent-passages" aria-label="최근 읽은 성경">
         <div
           className="recent-reading-list"
           ref={recentReadingListRef}
@@ -4091,6 +4312,7 @@ function BibleView({
       <section className="bible-controls" aria-label="성경 본문 선택">
         <button
           className="passage-picker-trigger"
+          data-tutorial="bible-switcher"
           type="button"
           aria-haspopup="dialog"
           onClick={() => setIsPassagePickerOpen(true)}
@@ -4229,6 +4451,7 @@ function BibleView({
                 <div className={`verse-wrap ${isSelected ? 'is-selected' : ''} ${isMultiSelectMode ? 'is-multi-mode' : ''} ${isMultiSelected ? 'is-multi-selected' : ''}`}>
                   <button
                     className="verse-row"
+                    data-tutorial={verse === activeVerses[0] ? 'verse-interactions' : undefined}
                     data-verse-number={verse.verse}
                     type="button"
                     title={isMultiSelectMode ? '탭하여 절 선택' : '두 번 탭하여 읽음 표시, 길게 눌러 옵션 열기'}
@@ -4827,6 +5050,7 @@ function ChurchView({
           forwardConversations={conversations}
           forwardQtRooms={qtRooms}
           onForwardMessage={onForwardMessage}
+          selectedTranslation={selectedTranslation}
         />
       )}
     </div>
@@ -5918,7 +6142,7 @@ function QtCreationFlow({ conversations, qtRooms, selectedTranslation, onClose, 
         </div>
         <footer><span>{sourceMode === 'qt' ? (selectedQtRoomId ? 'QT방 선택됨' : 'QT방을 선택해 주세요') : `${selectedMembers.length}명 선택`}</span><button type="button" disabled={sourceMode === 'qt' ? !selectedQtRoomId : !selectedMembers.length} onClick={() => setStep('verse')}>말씀 선택</button></footer>
       </section>
-      {previewMember && <MemberProfileSheet member={previewMember} onClose={() => setPreviewMember(null)} />}
+      {previewMember && <MemberProfileSheet member={previewMember} selectedTranslation={selectedTranslation} onClose={() => setPreviewMember(null)} />}
     </div>
   );
 }
@@ -6028,7 +6252,7 @@ function HomeRecommendations({ query, setQuery, selectBiblePassage, onOpenBibleV
   );
 }
 
-function MessageView({ conversations, setConversations, qtRooms, setQtRooms, friendsMenuOpen, onCloseFriendsMenu, onOpenBibleVerse, onForwardMessage, currentChurchId, navigationTarget, onNavigationHandled, members = knownMessageMembers, serverBacked = false, onReloadMessages }) {
+function MessageView({ conversations, setConversations, qtRooms, setQtRooms, friendsMenuOpen, onCloseFriendsMenu, onOpenBibleVerse, onForwardMessage, currentChurchId, navigationTarget, onNavigationHandled, members = knownMessageMembers, selectedTranslation, serverBacked = false, onReloadMessages }) {
   const [directoryMode, setDirectoryMode] = useState('recent');
   const [openConversationId, setOpenConversationId] = useState('');
   const [openQtRoomId, setOpenQtRoomId] = useState('');
@@ -6329,7 +6553,7 @@ function MessageView({ conversations, setConversations, qtRooms, setQtRooms, fri
                 <span className={`directory-avatar tone-${member.tone}`} aria-hidden="true"><UserRound className="default-profile-glyph" /></span>
                 <span className="member-directory-copy">
                   <span><strong>{member.name}</strong><small>{member.churchId && member.churchId !== currentChurchId ? member.churchName : `${member.department} · ${member.role}`}</small></span>
-                  <p><BookOpen size={13} aria-hidden="true" /><span>{member.verseRef}</span>{member.representativeVerse}</p>
+                  <p><BookOpen size={13} aria-hidden="true" /><span>{member.verseRef}</span><RepresentativeVerseText reference={member.verseRef} fallbackText={member.representativeVerse} translationId={selectedTranslation} /></p>
                 </span>
                 <ChevronRight size={18} aria-hidden="true" />
               </button>
@@ -6361,6 +6585,7 @@ function MessageView({ conversations, setConversations, qtRooms, setQtRooms, fri
         <MemberProfileSheet
           member={selectedMemberProfile}
           currentChurchId={currentChurchId}
+          selectedTranslation={selectedTranslation}
           onClose={() => setSelectedMemberProfile(null)}
           onMessage={() => startMemberConversation(selectedMemberProfile)}
         />
@@ -6371,6 +6596,7 @@ function MessageView({ conversations, setConversations, qtRooms, setQtRooms, fri
           title="단체 채팅 만들기"
           description="함께 대화할 친구를 선택하세요"
           candidates={members}
+          selectedTranslation={selectedTranslation}
           minimumSelection={2}
           roomNameEnabled
           confirmLabel={(count) => `${count}명과 대화 시작`}
@@ -6392,6 +6618,7 @@ function MessageView({ conversations, setConversations, qtRooms, setQtRooms, fri
           forwardQtRooms={qtRooms}
           onForwardMessage={onForwardMessage}
           members={members}
+          selectedTranslation={selectedTranslation}
           serverBacked={serverBacked}
           onReloadMessages={onReloadMessages}
         />
@@ -6408,6 +6635,7 @@ function MessageView({ conversations, setConversations, qtRooms, setQtRooms, fri
           forwardQtRooms={qtRooms}
           onForwardMessage={onForwardMessage}
           members={members}
+          selectedTranslation={selectedTranslation}
           serverBacked={serverBacked}
           onReloadMessages={onReloadMessages}
         />
@@ -6423,6 +6651,7 @@ function MessageView({ conversations, setConversations, qtRooms, setQtRooms, fri
         sentFriendRequestIds={sentFriendRequestIds}
         setSentFriendRequestIds={setSentFriendRequestIds}
         members={members}
+        selectedTranslation={selectedTranslation}
         serverBacked={serverBacked}
         onReload={onReloadMessages}
       />
@@ -6440,6 +6669,7 @@ function MessageFriendsPanel({
   sentFriendRequestIds,
   setSentFriendRequestIds,
   members = knownMessageMembers,
+  selectedTranslation,
   serverBacked = false,
   onReload,
 }) {
@@ -6548,6 +6778,7 @@ function MessageFriendsPanel({
           setSentFriendRequestIds={setSentFriendRequestIds}
           onClose={() => setFriendAddOpen(false)}
           members={members}
+          selectedTranslation={selectedTranslation}
           serverBacked={serverBacked}
           onReload={onReload}
         />
@@ -6556,7 +6787,7 @@ function MessageFriendsPanel({
   );
 }
 
-function FriendAddSheet({ friendIds, blockedFriendIds, sentFriendRequestIds, setSentFriendRequestIds, onClose, members = knownMessageMembers, serverBacked = false, onReload }) {
+function FriendAddSheet({ friendIds, blockedFriendIds, sentFriendRequestIds, setSentFriendRequestIds, onClose, members = knownMessageMembers, selectedTranslation, serverBacked = false, onReload }) {
   const [nickname, setNickname] = useState('');
   const [matchedMember, setMatchedMember] = useState(null);
   const [searchMessage, setSearchMessage] = useState('');
@@ -6619,7 +6850,7 @@ function FriendAddSheet({ friendIds, blockedFriendIds, sentFriendRequestIds, set
           <article className="friend-search-result">
             <span className={`directory-avatar tone-${matchedMember.tone}`} aria-hidden="true"><UserRound className="default-profile-glyph" /></span>
             <div className="friend-result-heading"><strong>{matchedMember.name}</strong><span>@{matchedMember.nickname}</span><small>{isDifferentChurch ? matchedMember.churchName : `${matchedMember.department} · ${matchedMember.role}`}</small></div>
-            <blockquote><BookOpen size={16} aria-hidden="true" /><p>{matchedMember.representativeVerse}</p><cite>{matchedMember.verseRef}</cite></blockquote>
+            <blockquote><BookOpen size={16} aria-hidden="true" /><p><RepresentativeVerseText reference={matchedMember.verseRef} fallbackText={matchedMember.representativeVerse} translationId={selectedTranslation} /></p><cite>{matchedMember.verseRef}</cite></blockquote>
             <button type="button" disabled={isFriend || isBlocked || requestSent} onClick={requestFriend}>
               {isBlocked ? '차단 해제 후 신청 가능' : isFriend ? '이미 친구예요' : requestSent ? '친구 신청을 보냈어요' : '친구 신청'}
             </button>
@@ -6630,7 +6861,7 @@ function FriendAddSheet({ friendIds, blockedFriendIds, sentFriendRequestIds, set
   );
 }
 
-function MemberProfileSheet({ member, onClose, onMessage, currentChurchId }) {
+function MemberProfileSheet({ member, onClose, onMessage, currentChurchId, selectedTranslation }) {
   const { isClosing, dismiss } = useSlideDismiss(onClose);
   const activeChurchId = currentChurchId ?? readStoredValue(CURRENT_CHURCH_STORAGE_KEY, 'grace-spring');
   const memberChurchId = member.churchId ?? 'grace-spring';
@@ -6652,7 +6883,7 @@ function MemberProfileSheet({ member, onClose, onMessage, currentChurchId }) {
         </div>
         <blockquote className="member-profile-verse">
           <BookOpen size={19} aria-hidden="true" />
-          <p>{member.representativeVerse}</p>
+          <p><RepresentativeVerseText reference={member.verseRef} fallbackText={member.representativeVerse} translationId={selectedTranslation} /></p>
           <cite>{member.verseRef}</cite>
         </blockquote>
         <dl className="member-profile-meta">
@@ -6676,6 +6907,7 @@ function MemberSelectionSheet({
   candidates,
   minimumSelection = 1,
   roomNameEnabled = false,
+  selectedTranslation,
   confirmLabel,
   onClose,
   onConfirm,
@@ -6860,13 +7092,13 @@ function MemberSelectionSheet({
       )}
 
       {previewMember && (
-        <MemberProfileSheet member={previewMember} onClose={() => setPreviewMember(null)} />
+        <MemberProfileSheet member={previewMember} selectedTranslation={selectedTranslation} onClose={() => setPreviewMember(null)} />
       )}
     </div>
   );
 }
 
-function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, onUpdateDraft, onCreateGroup, onOpenBibleVerse, forwardConversations = [], forwardQtRooms = [], onForwardMessage, members = knownMessageMembers, serverBacked = false, onReloadMessages }) {
+function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, onUpdateDraft, onCreateGroup, onOpenBibleVerse, forwardConversations = [], forwardQtRooms = [], onForwardMessage, members = knownMessageMembers, selectedTranslation, serverBacked = false, onReloadMessages }) {
   const [draft, setDraft] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [messageQuery, setMessageQuery] = useState('');
@@ -7642,6 +7874,7 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
             ? '현재 대화 내용은 새 채팅방에 포함되지 않아요'
             : '새 친구는 초대 이후의 대화만 볼 수 있어요'}
           candidates={inviteCandidates}
+          selectedTranslation={selectedTranslation}
           roomNameEnabled={participantIds.length === 1}
           confirmLabel={(count) => `${count}명 초대`}
           onClose={() => setInviteOpen(false)}
@@ -7815,6 +8048,7 @@ function ProfileView({
             <b className="profile-featured-achievement"><Award size={12} aria-hidden="true" />{personalProfile.featuredAchievementName}</b>
           )}
           <p>@{personalProfile.nickname}{currentChurch ? ` · ${churchInfo.department}` : ''}</p>
+          <p className="profile-summary-verse"><RepresentativeVerseText reference={personalProfile.verseRef} fallbackText={personalProfile.representativeVerse} translationId={selectedTranslation} /></p>
           <small>{personalProfile.verseRef}</small>
         </div>
         <ChevronRight size={18} aria-hidden="true" />
@@ -8058,7 +8292,7 @@ function SelfProfileEditor({ profile, selectedTranslation, achievements, onClose
           <span className="self-profile-field-label">대표 말씀</span>
           <button className="representative-verse-trigger" type="button" onClick={() => setVersePickerOpen(true)}>
             <span><BookOpen size={18} aria-hidden="true" /></span>
-            <span><strong>{draft.verseRef}</strong><small>{draft.representativeVerse}</small></span>
+            <span><strong>{draft.verseRef}</strong><small><RepresentativeVerseText reference={draft.verseRef} fallbackText={draft.representativeVerse} translationId={selectedTranslation} /></small></span>
             <ChevronRight size={18} aria-hidden="true" />
           </button>
           <fieldset className="profile-achievement-picker">
