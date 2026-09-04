@@ -42,7 +42,7 @@ const interestChoices = ['성경 읽기', 'QT와 묵상', '교회 소식', '예�
 const paceChoices = [
   { id: '5', label: '가볍게', helper: '하루 5분' },
   { id: '10', label: '꾸준하게', helper: '하루 10분' },
-  { id: '20', label: '깊이 있게', helper: '하루 20분' },
+  { id: '20', label: '깊이 있게', helper: '하루 20분 이상' },
 ];
 
 function OnboardingApp() {
@@ -58,8 +58,8 @@ function OnboardingApp() {
     churchStatus: '',
     churchId: '',
     churchName: '',
-    interests: ['성경 읽기'],
-    pace: '10',
+    interests: [],
+    pace: '',
   });
 
   const progress = useMemo(() => ((tutorialStep + 1) / 3) * 100, [tutorialStep]);
@@ -213,6 +213,7 @@ function OnboardingApp() {
       writeStoredValue('bibleon.personalProfile', { ...savedProfile, name: displayName });
 
       try {
+        const answeredAt = new Date().toISOString();
         await accountRepository.saveOnboarding({
           displayName,
           profile: { ...savedProfile, name: displayName },
@@ -222,8 +223,14 @@ function OnboardingApp() {
             churchName: profile.churchStatus === 'member' ? profile.churchName : '',
             interests: profile.interests,
             pace: profile.pace,
+            preferenceSurvey: {
+              version: 1,
+              interests: profile.interests,
+              dailyReadingMinutes: Number(profile.pace),
+              answeredAt,
+            },
             authMethod,
-            completedAt: new Date().toISOString(),
+            completedAt: answeredAt,
           },
         });
         if (authUser && profile.churchStatus === 'member' && profile.churchId) {
@@ -237,12 +244,6 @@ function OnboardingApp() {
         setAuthPending(false);
       }
     }
-  };
-
-  const resetPreview = () => {
-    setScreen('signup');
-    setTutorialStep(0);
-    setAuthMethod('');
   };
 
   return (
@@ -423,7 +424,7 @@ function OnboardingApp() {
               <div><dt>관심 기능</dt><dd>{profile.interests.slice(0, 2).join(', ')}</dd></div>
               <div><dt>읽기 목표</dt><dd>하루 {profile.pace}분</dd></div>
             </dl>
-            <button className="onboarding-primary-button" type="button" onClick={resetPreview}>튜토리얼 다시 보기</button>
+            <button className="onboarding-primary-button" type="button" onClick={() => window.location.assign('/')}>바이블온 시작하기</button>
           </div>
         )}
       </section>

@@ -136,6 +136,7 @@ const bibleBooks = bibleCatalog.map((book) => ({
 const defaultRecentPassages = Object.entries(readingHighlights)
   .map(([bookId, reading]) => ({ bookId, chapter: reading.chapter }))
   .reverse();
+const tutorialRecentPassages = defaultRecentPassages.slice(0, 4);
 
 const translations = [
   { id: 'KRV', label: '개역개정' },
@@ -858,7 +859,7 @@ const ACCOUNT_ONBOARDING_STORAGE_KEY = 'bibleon.accountOnboardingV1';
 const APP_TUTORIAL_STEPS = [
   {
     target: 'home-chatbot',
-    title: '바이블온에게 묻기',
+    title: '바이블온 채팅',
     description: '말씀을 찾거나 마음을 나누고 싶을 때 이곳에 편하게 질문하세요.',
   },
   {
@@ -867,19 +868,42 @@ const APP_TUTORIAL_STEPS = [
     description: '이전에 나눈 대화를 다시 열거나 새 대화를 시작할 수 있어요.',
   },
   {
-    target: 'recent-passages',
-    title: '최근 읽은 성경',
-    description: '최근 읽던 책과 장을 좌우로 살펴보고 곧바로 이어 읽을 수 있어요.',
+    target: 'bottom-navigation',
+    title: '하단 메뉴',
+    description: '성경, 교회, 홈, 메시지, 개인 화면을 이곳에서 전환할 수 있어요.',
+  },
+  {
+    target: 'bible-tab',
+    title: '성경 탭으로 이동',
+    description: '성경탭을 클릭해보세요!',
+    interaction: 'bible-tab',
+  },
+  {
+    target: 'bible-switcher',
+    title: '성경 변경',
+    description: '책과 장을 빠르게 바꾸고 원하는 번역으로 읽을 수 있어요.',
   },
   {
     target: 'verse-interactions',
     title: '절 상호작용',
-    description: '길게 누르면 메모·강조·전달·분석이 열리고, 두 번 탭하면 읽음으로 표시돼요.',
+    description: '두 번 탭하면 읽음 상태가 바뀌고, 길게 누르면 메모·강조·전달·분석이 열려요.',
   },
   {
-    target: 'bible-switcher',
-    title: '성경 전환',
-    description: '책과 장을 빠르게 바꾸고 원하는 번역으로 읽을 수 있어요.',
+    target: 'verse-read-practice',
+    title: '읽음 표시 체험',
+    description: '이 절을 두 번 눌러 읽음으로 표시한 뒤, 다시 두 번 눌러 읽음 표시를 취소해 보세요.',
+    interaction: 'read-cycle',
+  },
+  {
+    target: 'verse-action-practice',
+    title: '절 옵션 체험',
+    description: '이 절을 꾹 눌러 옵션 말풍선을 열어보세요.',
+    interaction: 'long-press',
+  },
+  {
+    target: 'recent-passages',
+    title: '최근 읽은 성경',
+    description: '최근 읽던 책과 장을 좌우로 살펴보고 곧바로 이어 읽을 수 있어요.',
   },
 ];
 
@@ -1104,8 +1128,11 @@ function useHeavyOverscroll(rootRef) {
 }
 
 function App() {
+  const tutorialPreviewMode = new URLSearchParams(window.location.search).get('tutorial') === '1';
   const appShellRef = useRef(null);
   const workspaceRef = useRef(null);
+  const tutorialSnapshotRef = useRef(null);
+  const tutorialAdvanceTimerRef = useRef(null);
   const initialHomeChatRoomsRef = useRef(null);
   if (initialHomeChatRoomsRef.current === null) {
     initialHomeChatRoomsRef.current = loadHomeChatRooms();
@@ -1142,14 +1169,12 @@ function App() {
     readStoredValue(ACCOUNT_ONBOARDING_STORAGE_KEY, {}).memoViewMode
   ));
   const [appTutorialStep, setAppTutorialStep] = useState(null);
+  const [tutorialReadVerseIds, setTutorialReadVerseIds] = useState([]);
+  const [tutorialReadPhase, setTutorialReadPhase] = useState(0);
+  const [tutorialLongPressDone, setTutorialLongPressDone] = useState(false);
   const [selectedRef, setSelectedRef] = useState('빌립보서 4:6');
   const [favoriteRefs] = useState(['시편 23:1']);
-  const [readVerseIds, setReadVerseIds] = useState(() => readStoredValue(READ_VERSES_STORAGE_KEY, [
-    'genesis-1-1',
-    'genesis-1-2',
-    'philippians-4-4',
-    'philippians-4-5',
-  ]));
+  const [readVerseIds, setReadVerseIds] = useState(() => readStoredValue(READ_VERSES_STORAGE_KEY, []));
   const [bibleVerseTotal, setBibleVerseTotal] = useState(0);
   const [readingState, setReadingState] = useState(() => readStoredValue(READING_STATE_STORAGE_KEY, { cycle: 1, eligible: true }));
   const [readingProgressHistory, setReadingProgressHistory] = useState(() => readStoredValue(READING_PROGRESS_HISTORY_KEY, { cycle: 1, points: {} }));
@@ -1217,6 +1242,10 @@ function App() {
   useHeavyOverscroll(appShellRef);
 
   useEffect(() => {
+    if (tutorialPreviewMode) setAppTutorialStep(0);
+  }, [tutorialPreviewMode]);
+
+  useEffect(() => {
     if (!accountRepository.configured) return undefined;
     let active = true;
 
@@ -1238,7 +1267,7 @@ function App() {
       const mergedOnboarding = { ...localOnboarding, ...remoteOnboarding };
       setAccountOnboarding(mergedOnboarding);
       setMemoViewMode(normalizeMemoViewMode(mergedOnboarding.memoViewMode));
-      setAppTutorialStep(mergedOnboarding.appTutorialCompletedAt ? null : 0);
+      setAppTutorialStep(tutorialPreviewMode || !mergedOnboarding.appTutorialCompletedAt ? 0 : null);
       if (account.preferences) {
         const preference = account.preferences;
         if (['KRV', 'RNKSV'].includes(preference.defaultTranslation)) {
@@ -1469,6 +1498,16 @@ function App() {
 
   const selectTab = (tabId) => {
     setMessageFriendsMenuOpen(false);
+    if (appTutorialStep === 3) {
+      if (tabId !== 'bible') return;
+      setIsHomeChatOpen(false);
+      setActiveTab('bible');
+      setAppTutorialStep(4);
+      window.requestAnimationFrame(() => {
+        workspaceRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+      });
+      return;
+    }
     if (tabId === 'home') {
       setActiveTab('home');
       closeHomeChat();
@@ -1483,7 +1522,25 @@ function App() {
 
   useEffect(() => {
     if (appTutorialStep === null) return;
-    const tutorialTab = appTutorialStep >= 2 ? 'bible' : 'home';
+    if (!tutorialSnapshotRef.current) {
+      tutorialSnapshotRef.current = {
+        selectedBookId,
+        selectedChapter,
+        selectedTranslation,
+        selectedRef,
+      };
+      setSelectedBookId('philippians');
+      setSelectedChapter(4);
+      setTutorialReadVerseIds([]);
+      setTutorialReadPhase(0);
+      setTutorialLongPressDone(false);
+    }
+    if (appTutorialStep === 6) {
+      setTutorialReadVerseIds([]);
+      setTutorialReadPhase(0);
+    }
+    if (appTutorialStep === 7) setTutorialLongPressDone(false);
+    const tutorialTab = appTutorialStep >= 4 ? 'bible' : 'home';
     setMessageFriendsMenuOpen(false);
     setIsHomeChatOpen(false);
     setActiveTab(tutorialTab);
@@ -1492,6 +1549,29 @@ function App() {
     });
   }, [appTutorialStep]);
 
+  useEffect(() => () => window.clearTimeout(tutorialAdvanceTimerRef.current), []);
+
+  const handleTutorialReadToggle = ({ isRead }) => {
+    if (appTutorialStep !== 6) return;
+    setTutorialReadPhase((current) => {
+      if (current === 0 && isRead) return 1;
+      if (current === 1 && !isRead) {
+        window.setTimeout(() => setAppTutorialStep((step) => step === 6 ? 7 : step), 180);
+        return 2;
+      }
+      return current;
+    });
+  };
+
+  const handleTutorialVerseActionsOpened = () => {
+    if (appTutorialStep !== 7 || tutorialLongPressDone) return;
+    setTutorialLongPressDone(true);
+    window.clearTimeout(tutorialAdvanceTimerRef.current);
+    tutorialAdvanceTimerRef.current = window.setTimeout(() => {
+      setAppTutorialStep((step) => step === 7 ? 8 : step);
+    }, 700);
+  };
+
   const completeAppTutorial = () => {
     const completedAt = new Date().toISOString();
     const nextOnboarding = {
@@ -1499,9 +1579,22 @@ function App() {
       memoViewMode,
       appTutorialCompletedAt: completedAt,
     };
-    setAccountOnboarding(nextOnboarding);
+    if (!tutorialPreviewMode) setAccountOnboarding(nextOnboarding);
+    const snapshot = tutorialSnapshotRef.current;
+    if (snapshot) {
+      setSelectedBookId(snapshot.selectedBookId);
+      setSelectedChapter(snapshot.selectedChapter);
+      setSelectedTranslation(snapshot.selectedTranslation);
+      setSelectedRef(snapshot.selectedRef);
+    }
+    tutorialSnapshotRef.current = null;
+    window.clearTimeout(tutorialAdvanceTimerRef.current);
+    setTutorialReadVerseIds([]);
+    setTutorialReadPhase(0);
+    setTutorialLongPressDone(false);
+    setActiveTab('home');
     setAppTutorialStep(null);
-    if (accountSyncReady) {
+    if (accountSyncReady && !tutorialPreviewMode) {
       void accountRepository.savePreferences({
         defaultTranslation: selectedTranslation,
         themePreference,
@@ -1576,7 +1669,7 @@ function App() {
         readVerseIds,
         readingState,
         readingProgressHistory,
-        recentPassages: readStoredValue('bibleon.recentPassages', defaultRecentPassages),
+        recentPassages: readStoredValue('bibleon.recentPassages', []),
       }).catch(() => {});
     }, 650);
     return () => window.clearTimeout(timerId);
@@ -1642,7 +1735,7 @@ function App() {
         readVerseIds,
         readingState,
         readingProgressHistory,
-        recentPassages: readStoredValue('bibleon.recentPassages', defaultRecentPassages),
+        recentPassages: readStoredValue('bibleon.recentPassages', []),
       }).catch(() => {});
       void personalDataRepository.syncNotes(verseNotes).catch(() => {});
       void personalDataRepository.syncHighlights(verseHighlights).catch(() => {});
@@ -1708,6 +1801,7 @@ function App() {
   }, [accountSyncReady, personalProfile]);
 
   useEffect(() => {
+    if (appTutorialStep !== null) return undefined;
     writeStoredValue('bibleon.defaultTranslation', selectedTranslation);
     if (!accountSyncReady) return undefined;
     const timerId = window.setTimeout(() => {
@@ -1722,7 +1816,7 @@ function App() {
       }).catch(() => {});
     }, 450);
     return () => window.clearTimeout(timerId);
-  }, [accountOnboarding, accountSyncReady, darkModeEnd, darkModeStart, selectedTranslation, themeControlMode, themePreference]);
+  }, [accountOnboarding, accountSyncReady, appTutorialStep, darkModeEnd, darkModeStart, selectedTranslation, themeControlMode, themePreference]);
 
   useEffect(() => {
     writeStoredValue(ACCOUNT_ONBOARDING_STORAGE_KEY, accountOnboarding);
@@ -1976,6 +2070,34 @@ function App() {
     await refreshSharedData();
   };
 
+  const createManagedChurch = async (name) => {
+    const trimmedName = name.trim();
+    if (!trimmedName) throw new Error('교회 이름을 입력해 주세요.');
+    if (currentAccountUser) {
+      const churchId = await churchRepository.create(trimmedName);
+      setCurrentChurchId(churchId);
+      setChurchAccess({ authority: '관리자', managerDepartmentId: '' });
+      await refreshSharedData();
+      return churchId;
+    }
+
+    const churchId = `church-${Date.now()}`;
+    const church = {
+      id: churchId,
+      name: trimmedName,
+      denomination: '교단 정보 미설정',
+      location: '지역 정보 미설정',
+      createdByAdmin: true,
+      profileImage: '',
+      verseRef: '',
+      representativeVerse: '교회 관리에서 대표 말씀을 설정해 주세요.',
+    };
+    setChurchProfiles((current) => ({ ...current, [churchId]: church }));
+    setCurrentChurchId(churchId);
+    setChurchAccess({ authority: '관리자', managerDepartmentId: '' });
+    return churchId;
+  };
+
   const searchAvailableChurches = async (searchText) => {
     if (!currentAccountUser) return searchRegisteredChurches(searchText, churchProfiles).slice(0, 8);
     const results = await churchRepository.search(searchText);
@@ -2078,8 +2200,8 @@ function App() {
             selectedTranslation={selectedTranslation}
             setSelectedTranslation={setSelectedTranslation}
             setSelectedRef={setSelectedRef}
-            readVerseIds={readVerseIds}
-            setReadVerseIds={setReadVerseIds}
+            readVerseIds={appTutorialStep !== null ? tutorialReadVerseIds : readVerseIds}
+            setReadVerseIds={appTutorialStep !== null ? setTutorialReadVerseIds : setReadVerseIds}
             verseNotes={verseNotes}
             setVerseNotes={setVerseNotes}
             verseNoteMeta={verseNoteMeta}
@@ -2094,7 +2216,11 @@ function App() {
             setConversations={setConversations}
             qtRooms={qtRooms}
             setQtRooms={setQtRooms}
-            onVerseMarkedRead={recordVerseRead}
+            onVerseMarkedRead={appTutorialStep !== null ? undefined : recordVerseRead}
+            tutorialMode={appTutorialStep !== null}
+            tutorialStep={appTutorialStep}
+            onTutorialReadToggle={handleTutorialReadToggle}
+            onTutorialVerseActionsOpened={handleTutorialVerseActionsOpened}
           />
         )}
         {activeTab === 'church' && (
@@ -2115,6 +2241,7 @@ function App() {
             currentChurchId={currentChurchId}
             churchProfiles={churchProfiles}
             onRegisterChurch={registerCurrentChurch}
+            onCreateChurch={createManagedChurch}
             onSaveChurchProfile={saveCurrentChurchProfile}
             navigationTarget={churchNavigationTarget}
             onNavigationHandled={() => setChurchNavigationTarget(null)}
@@ -2175,10 +2302,13 @@ function App() {
       <BottomNav
         activeTab={activeTab === 'home' && isHomeChatOpen ? null : activeTab}
         onSelectTab={selectTab}
+        tutorialStep={appTutorialStep}
       />
       {appTutorialStep !== null && !isAppLoading && !isHomeIntro && !isHomeReturning && (
         <AppTutorial
           step={appTutorialStep}
+          readPracticePhase={tutorialReadPhase}
+          longPressDone={tutorialLongPressDone}
           onNext={() => {
             if (appTutorialStep >= APP_TUTORIAL_STEPS.length - 1) completeAppTutorial();
             else setAppTutorialStep((current) => current + 1);
@@ -2726,7 +2856,7 @@ function HomeChatHistory({
 
 function BottomNav({ activeTab, onSelectTab }) {
   return (
-    <nav className="bottom-nav" aria-label="하단 메뉴">
+    <nav className="bottom-nav" data-tutorial="bottom-navigation" aria-label="하단 메뉴">
       {tabs.map((tab) => {
         const Icon = tab.icon;
         const isActive = activeTab === tab.id;
@@ -2735,6 +2865,7 @@ function BottomNav({ activeTab, onSelectTab }) {
             className={`nav-item ${isActive ? 'is-active' : ''}`}
             key={tab.id}
             type="button"
+            data-tutorial={tab.id === 'bible' ? 'bible-tab' : undefined}
             aria-current={isActive ? 'page' : undefined}
             onClick={() => onSelectTab(tab.id)}
           >
@@ -2755,9 +2886,15 @@ function BottomNav({ activeTab, onSelectTab }) {
   );
 }
 
-function AppTutorial({ step, onNext, onSkip }) {
+function AppTutorial({ step, readPracticePhase, longPressDone, onNext, onSkip }) {
   const [spotlight, setSpotlight] = useState(null);
   const currentStep = APP_TUTORIAL_STEPS[step] ?? APP_TUTORIAL_STEPS[0];
+  const isInteractive = Boolean(currentStep.interaction);
+  const description = currentStep.interaction === 'read-cycle' && readPracticePhase === 1
+    ? '읽음으로 표시됐어요. 같은 절을 다시 두 번 눌러 읽음 표시를 취소해 보세요.'
+    : currentStep.interaction === 'long-press' && longPressDone
+      ? '옵션 말풍선을 열었어요. 마지막 안내로 이동합니다.'
+      : currentStep.description;
 
   useLayoutEffect(() => {
     let hasScrolled = false;
@@ -2810,7 +2947,7 @@ function AppTutorial({ step, onNext, onSkip }) {
   }, [currentStep.target]);
 
   return createPortal(
-    <div className="app-tutorial-layer" role="dialog" aria-modal="true" aria-labelledby="app-tutorial-title">
+    <div className={`app-tutorial-layer ${isInteractive ? 'is-interactive' : ''}`} role="dialog" aria-modal={!isInteractive} aria-labelledby="app-tutorial-title">
       {spotlight && (
         <>
           <div
@@ -2827,15 +2964,15 @@ function AppTutorial({ step, onNext, onSkip }) {
             className="app-tutorial-card"
             style={{ left: spotlight.bubbleLeft, top: spotlight.bubbleTop, width: spotlight.bubbleWidth }}
           >
-            <div className="app-tutorial-progress" aria-label={`튜토리얼 ${step + 1}/${APP_TUTORIAL_STEPS.length}`}>
+            <div className="app-tutorial-progress" style={{ '--tutorial-step-count': APP_TUTORIAL_STEPS.length }} aria-label={`튜토리얼 ${step + 1}/${APP_TUTORIAL_STEPS.length}`}>
               {APP_TUTORIAL_STEPS.map((item, index) => <i className={index <= step ? 'is-active' : ''} key={item.target} />)}
             </div>
             <span>{step + 1} / {APP_TUTORIAL_STEPS.length}</span>
             <h2 id="app-tutorial-title">{currentStep.title}</h2>
-            <p>{currentStep.description}</p>
-            <footer>
+            <p aria-live="polite">{description}</p>
+            <footer className={isInteractive ? 'is-guided' : ''}>
               <button type="button" onClick={onSkip}>건너뛰기</button>
-              <button type="button" onClick={onNext}>{step === APP_TUTORIAL_STEPS.length - 1 ? '시작하기' : '다음'}</button>
+              {!isInteractive && <button type="button" onClick={onNext}>{step === APP_TUTORIAL_STEPS.length - 1 ? '시작하기' : '다음'}</button>}
             </footer>
           </section>
         </>
@@ -3722,6 +3859,10 @@ function BibleView({
   qtRooms,
   setQtRooms,
   onVerseMarkedRead,
+  tutorialMode = false,
+  tutorialStep = null,
+  onTutorialReadToggle,
+  onTutorialVerseActionsOpened,
 }) {
   const [selectedVerse, setSelectedVerse] = useState(null);
   const [verseActionAnchor, setVerseActionAnchor] = useState(null);
@@ -3738,9 +3879,10 @@ function BibleView({
   const [isPassagePickerOpen, setIsPassagePickerOpen] = useState(false);
   const [shareSheetVerses, setShareSheetVerses] = useState([]);
   const [recentPassages] = useState(() => {
-    const stored = readStoredValue('bibleon.recentPassages', defaultRecentPassages);
-    return Array.isArray(stored) ? stored.slice(0, 10) : defaultRecentPassages;
+    const stored = readStoredValue('bibleon.recentPassages', []);
+    return Array.isArray(stored) ? stored.slice(0, 10) : [];
   });
+  const visibleRecentPassages = tutorialMode ? tutorialRecentPassages : recentPassages;
   const recentReadingListRef = useRef(null);
   const recentReadingDragRef = useRef(null);
   const recentReadingClickGuardRef = useRef(false);
@@ -3798,8 +3940,9 @@ function BibleView({
     : 0;
 
   useEffect(() => {
-    const stored = readStoredValue('bibleon.recentPassages', defaultRecentPassages);
-    const current = Array.isArray(stored) ? stored : defaultRecentPassages;
+    if (tutorialMode) return;
+    const stored = readStoredValue('bibleon.recentPassages', []);
+    const current = Array.isArray(stored) ? stored : [];
     const nextPassage = { bookId: selectedBook.id, chapter: selectedChapter };
     const next = [
       nextPassage,
@@ -3808,7 +3951,7 @@ function BibleView({
       )),
     ].slice(0, 10);
     writeStoredValue('bibleon.recentPassages', next);
-  }, [selectedBook.id, selectedChapter]);
+  }, [selectedBook.id, selectedChapter, tutorialMode]);
 
   useEffect(() => {
     setSelectedVerse(null);
@@ -3928,6 +4071,9 @@ function BibleView({
     if (!wasRead) {
       const verse = activeVerses.find(({ id }) => id === verseId);
       if (verse) onVerseMarkedRead?.(verse);
+    }
+    if (tutorialStep === 6 && verseId === activeVerses[0]?.id) {
+      onTutorialReadToggle?.({ verseId, isRead: !wasRead });
     }
   };
 
@@ -4166,6 +4312,9 @@ function BibleView({
       setVerseActionClosing(false);
       setSelectedVerse(verse.id);
       setVerseActionAnchor({ source: 'verse', verseId: verse.id });
+      if (tutorialStep === 7 && verse.id === activeVerses[0]?.id) {
+        onTutorialVerseActionsOpened?.(verse.id);
+      }
     }, 500);
   };
 
@@ -4248,6 +4397,14 @@ function BibleView({
   }, []);
 
   useEffect(() => {
+    if (!tutorialMode || tutorialStep === 7) return;
+    setSelectedVerse(null);
+    setVerseActionAnchor(null);
+    setVerseActionClosing(false);
+    setHighlightPickerVerseId('');
+  }, [tutorialMode, tutorialStep]);
+
+  useEffect(() => {
     if (
       chapterState.status !== 'ready'
       || !navigationTarget
@@ -4287,7 +4444,7 @@ function BibleView({
           onPointerUp={endRecentPassageDrag}
           onPointerCancel={endRecentPassageDrag}
         >
-          {recentPassages.map((passage) => {
+          {visibleRecentPassages.map((passage) => {
             const book = bibleBooks.find((item) => item.id === passage.bookId);
             if (!book) return null;
             const isActive = selectedBookId === book.id && selectedChapter === passage.chapter;
@@ -4451,7 +4608,13 @@ function BibleView({
                 <div className={`verse-wrap ${isSelected ? 'is-selected' : ''} ${isMultiSelectMode ? 'is-multi-mode' : ''} ${isMultiSelected ? 'is-multi-selected' : ''}`}>
                   <button
                     className="verse-row"
-                    data-tutorial={verse === activeVerses[0] ? 'verse-interactions' : undefined}
+                    data-tutorial={verse === activeVerses[0]
+                      ? tutorialStep === 6
+                        ? 'verse-read-practice'
+                        : tutorialStep === 7
+                          ? 'verse-action-practice'
+                          : 'verse-interactions'
+                      : undefined}
                     data-verse-number={verse.verse}
                     type="button"
                     title={isMultiSelectMode ? '탭하여 절 선택' : '두 번 탭하여 읽음 표시, 길게 눌러 옵션 열기'}
@@ -4685,6 +4848,7 @@ function ChurchView({
   currentChurchId,
   churchProfiles,
   onRegisterChurch,
+  onCreateChurch,
   onSaveChurchProfile,
   navigationTarget,
   onNavigationHandled,
@@ -4703,6 +4867,7 @@ function ChurchView({
   const [worshipExpanded, setWorshipExpanded] = useState(false);
   const [worshipReadyNoticeOpen, setWorshipReadyNoticeOpen] = useState(false);
   const [churchRegistrationOpen, setChurchRegistrationOpen] = useState(false);
+  const [churchAdminRegistrationOpen, setChurchAdminRegistrationOpen] = useState(false);
   const [leaveChurchConfirmOpen, setLeaveChurchConfirmOpen] = useState(false);
   const [leaveRestriction, setLeaveRestriction] = useState('');
   const [selectedAnnouncement, setSelectedAnnouncement] = useState(null);
@@ -4837,7 +5002,13 @@ function ChurchView({
       <div className="page-stack church-empty-page">
         <section className="church-empty-state">
           <strong>등록된 교회가 존재하지 않아요</strong>
-          <button type="button" onClick={() => setChurchRegistrationOpen(true)}>교회 등록</button>
+          <div className="church-empty-actions">
+            <button type="button" onClick={() => setChurchRegistrationOpen(true)}>나의 교회 추가하기</button>
+            <button className="is-secondary" type="button" onClick={() => setChurchAdminRegistrationOpen(true)}>
+              <span>나의 교회 등록하기</span>
+              <small>교회 관리자 전용</small>
+            </button>
+          </div>
         </section>
         {churchRegistrationOpen && (
           <ChurchRegistrationSheet
@@ -4848,6 +5019,12 @@ function ChurchView({
               onRegisterChurch(church);
               setChurchRegistrationOpen(false);
             }}
+          />
+        )}
+        {churchAdminRegistrationOpen && (
+          <ChurchAdminRegistrationSheet
+            onClose={() => setChurchAdminRegistrationOpen(false)}
+            onCreate={onCreateChurch}
           />
         )}
       </div>
@@ -5142,6 +5319,62 @@ function ChurchRegistrationSheet({ churchProfiles, onClose, onRegister, onSearch
           )}
         </div>
         <button className="church-registration-confirm" type="button" disabled={!selectedChurch} onClick={() => dismiss(() => onRegister(selectedChurch))}>이 교회 등록</button>
+      </section>
+    </div>
+  );
+}
+
+function ChurchAdminRegistrationSheet({ onClose, onCreate }) {
+  const [churchName, setChurchName] = useState('');
+  const [authorityConfirmed, setAuthorityConfirmed] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const { isClosing, dismiss } = useSlideDismiss(onClose);
+  const normalizedName = churchName.trim();
+  const canCreate = normalizedName.length >= 2 && authorityConfirmed && !pending;
+
+  const submitRegistration = async (event) => {
+    event.preventDefault();
+    if (!canCreate) return;
+    setPending(true);
+    setErrorMessage('');
+    try {
+      await onCreate(normalizedName);
+      dismiss();
+    } catch (error) {
+      const duplicate = `${error?.message ?? ''}`.toLowerCase().includes('duplicate');
+      setErrorMessage(duplicate
+        ? '같은 이름으로 등록된 교회가 있어요. 나의 교회 추가하기에서 검색해 주세요.'
+        : (error?.message || '교회를 등록하지 못했어요. 잠시 후 다시 시도해 주세요.'));
+      setPending(false);
+    }
+  };
+
+  return (
+    <div className={`church-registration-layer ${isClosing ? 'is-closing' : ''}`}>
+      <button className="church-registration-backdrop" type="button" aria-label="교회 관리자 등록 닫기" onClick={() => dismiss()} />
+      <section className="church-registration-sheet church-admin-registration-sheet" role="dialog" aria-modal="true" aria-labelledby="church-admin-registration-title">
+        <header>
+          <div><h2 id="church-admin-registration-title">나의 교회 등록하기</h2><p>교회를 대표하는 관리자만 등록할 수 있습니다.</p></div>
+          <button type="button" aria-label="교회 관리자 등록 닫기" onClick={() => dismiss()}><X size={20} /></button>
+        </header>
+        <form onSubmit={submitRegistration}>
+          <label className="church-admin-name-field">
+            <span>교회 이름</span>
+            <input autoFocus maxLength={80} value={churchName} onChange={(event) => setChurchName(event.target.value)} placeholder="정식 교회 이름을 입력해 주세요" />
+          </label>
+          <div className="church-admin-registration-notice">
+            <strong>등록한 계정이 교회 관리자가 됩니다.</strong>
+            <p>교회 정보, 공동체원, 부서, 예배와 공지를 관리할 수 있어요. 실제 운영 전에는 교회 대표자 확인 절차를 추가할 예정입니다.</p>
+          </div>
+          <label className="church-admin-authority-check">
+            <input type="checkbox" checked={authorityConfirmed} onChange={(event) => setAuthorityConfirmed(event.target.checked)} />
+            <span aria-hidden="true">{authorityConfirmed && <Check size={14} />}</span>
+            <strong>이 교회를 대표해 등록할 권한이 있습니다.</strong>
+          </label>
+          {errorMessage && <p className="church-admin-registration-error" role="alert">{errorMessage}</p>}
+          <button className="church-registration-confirm" type="submit" disabled={!canCreate}>{pending ? '교회를 등록하고 있어요' : '교회 등록하기'}</button>
+        </form>
       </section>
     </div>
   );
