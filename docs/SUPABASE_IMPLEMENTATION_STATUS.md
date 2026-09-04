@@ -1,6 +1,6 @@
 # BibleOn Supabase 구현 상태
 
-기준 시각: 2026-09-04 09:43 KST
+기준 시각: 2026-09-04 09:58 KST
 
 ## 완료
 
@@ -37,6 +37,13 @@
    - 원격 DB lint
    - 익명 사용자의 핵심 테이블·RPC 접근 차단 및 위조 Storage 업로드 차단
    - 게스트 홈·메시지·성경 탭 브라우저 동작 확인
+
+7. **비공개 스테이징**
+   - `design` 브랜치의 커밋 `8244478`을 GitHub와 Sites 소스 저장소에 푸시
+   - 성경 정적 본문을 포함한 프로덕션 산출물을 Sites 버전 1로 저장 및 배포
+   - 소유자 한 명만 허용된 접근 정책과 ChatGPT 로그인 차단 확인
+   - 메인 HTML, JS/CSS, 개역개정 JSON, `/onboarding` 직접 진입의 HTTP 200 확인
+   - 비공개 주소: https://bibleon-staging.ingkko.chatgpt.site
 
 ## 외부 설정 필요
 
