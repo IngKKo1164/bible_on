@@ -71,7 +71,6 @@ body.onboarding-body #root {
 }
 
 .signup-view,
-.email-signup-view,
 .tutorial-view,
 .complete-view {
   margin: 0 auto;
@@ -189,28 +188,6 @@ body.onboarding-body #root {
   width: 100%;
 }
 
-.existing-account-button,
-.password-reset-button {
-  background: transparent;
-  border: 0;
-  color: #6b7480;
-  font-size: 12px;
-  margin-top: 13px;
-  padding: 7px;
-  text-align: center;
-}
-
-.existing-account-button strong,
-.password-reset-button {
-  color: #4b4298;
-  font-weight: 780;
-}
-
-.password-reset-button {
-  align-self: flex-end;
-  margin: 8px 0 12px;
-}
-
 .onboarding-primary-button:hover,
 .onboarding-primary-button:active {
   background: #37306f;
@@ -231,35 +208,10 @@ body.onboarding-body #root {
   word-break: keep-all;
 }
 
-.email-signup-view {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  padding-top: 34px;
-}
-
 .flow-heading {
   margin-bottom: 25px;
 }
 
-.signup-fields {
-  display: grid;
-  gap: 15px;
-}
-
-.signup-field {
-  display: grid;
-  gap: 7px;
-}
-
-.signup-field > span {
-  color: #4e5968;
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.signup-field > input,
-.password-input,
 .church-search-field {
   background: #fff;
   border: 1px solid #e1e4e8;
@@ -267,8 +219,6 @@ body.onboarding-body #root {
   min-height: 48px;
 }
 
-.signup-field > input,
-.password-input input,
 .church-search-field input {
   background: transparent;
   border: 0;
@@ -280,55 +230,19 @@ body.onboarding-body #root {
   width: 100%;
 }
 
-.signup-field input::placeholder,
 .church-search-field input::placeholder {
   color: #a3abb5;
 }
 
-.signup-field > input:focus,
-.password-input:focus-within,
 .church-search-field:focus-within {
   border-color: #766caf;
   box-shadow: 0 0 0 3px rgb(75 66 152 / 12%);
-}
-
-.password-input {
-  align-items: center;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px;
-}
-
-.password-input button {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  color: #7b8492;
-  display: inline-flex;
-  height: 44px;
-  justify-content: center;
-  padding: 0;
-  width: 44px;
 }
 
 .form-error {
   color: #c14848;
   font-size: 11px;
   margin: 3px 0 10px;
-}
-
-.form-notice {
-  background: #f1f0f8;
-  border-radius: 4px;
-  color: #4b4298;
-  font-size: 12px;
-  line-height: 1.55;
-  margin: 14px 0 0;
-  padding: 11px 13px;
-  word-break: keep-all;
-}
-
-.email-signup-view > .onboarding-primary-button {
-  margin-top: auto;
 }
 
 .tutorial-view {

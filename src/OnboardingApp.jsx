@@ -3,8 +3,6 @@ import {
   ArrowLeft,
   Check,
   ChevronRight,
-  Eye,
-  EyeOff,
   Search,
 } from 'lucide-react';
 import { BibleOnLogo, ChurchCrossIcon as Church } from './brandIcons';
@@ -20,8 +18,6 @@ import {
 import {
   getCurrentSession,
   onAuthStateChange,
-  sendPasswordReset,
-  signInWithEmail,
   signInWithSocialProvider,
 } from './data/repositories/authRepository';
 import { readStoredValue, writeStoredValue } from './data/repositories/persistenceRepository';
@@ -53,13 +49,10 @@ function OnboardingApp() {
   const [screen, setScreen] = useState('signup');
   const [tutorialStep, setTutorialStep] = useState(0);
   const [authMethod, setAuthMethod] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [authPending, setAuthPending] = useState(false);
-  const [authNotice, setAuthNotice] = useState('');
   const [authUser, setAuthUser] = useState(null);
   const [formError, setFormError] = useState('');
   const [unregisteredChurchName, setUnregisteredChurchName] = useState('');
-  const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [churchProfiles] = useState(() => readStoredValue(CHURCH_PROFILES_STORAGE_KEY, {}));
   const [profile, setProfile] = useState({
     churchStatus: '',
@@ -99,17 +92,8 @@ function OnboardingApp() {
     const acceptSession = async (session) => {
       if (!active || !session?.user) return;
       const user = session.user;
-      const displayName = user.user_metadata?.display_name
-        || user.user_metadata?.full_name
-        || user.user_metadata?.name
-        || '';
       setAuthUser(user);
-      setAuthMethod(user.app_metadata?.provider ?? 'email');
-      setForm((current) => ({
-        ...current,
-        name: current.name || displayName,
-        email: current.email || user.email || '',
-      }));
+      setAuthMethod(user.app_metadata?.provider ?? 'social');
       try {
         const account = await accountRepository.loadCurrentAccount();
         if (account?.preferences?.onboarding?.completedAt) {
@@ -141,7 +125,6 @@ function OnboardingApp() {
 
   const beginSocialSignup = async (provider) => {
     setFormError('');
-    setAuthNotice('');
     setAuthPending(true);
     try {
       const result = await signInWithSocialProvider(provider);
@@ -153,53 +136,7 @@ function OnboardingApp() {
     }
   };
 
-  const submitEmailSignin = async (event) => {
-    event.preventDefault();
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailPattern.test(form.email) || !form.password) {
-      setFormError('이메일과 비밀번호를 확인해 주세요.');
-      return;
-    }
-    setFormError('');
-    setAuthNotice('');
-    setAuthPending(true);
-    try {
-      const result = await signInWithEmail({
-        email: form.email.trim(),
-        password: form.password,
-      });
-      if (result.mode === 'preview') beginTutorial('email');
-      else window.location.replace('/');
-    } catch (error) {
-      setFormError(error?.message || '로그인하지 못했어요.');
-    } finally {
-      setAuthPending(false);
-    }
-  };
-
-  const requestPasswordReset = async () => {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
-      setFormError('먼저 가입한 이메일 주소를 입력해 주세요.');
-      return;
-    }
-    setAuthPending(true);
-    setFormError('');
-    try {
-      await sendPasswordReset(form.email.trim());
-      setAuthNotice('비밀번호 재설정 메일을 보냈어요.');
-    } catch (error) {
-      setFormError(error?.message || '재설정 메일을 보내지 못했어요.');
-    } finally {
-      setAuthPending(false);
-    }
-  };
-
   const goBack = () => {
-    if (screen === 'signin') {
-      setFormError('');
-      setScreen('signup');
-      return;
-    }
     if (screen === 'tutorial' && tutorialStep > 0) {
       setTutorialStep((current) => current - 1);
       return;
@@ -267,9 +204,9 @@ function OnboardingApp() {
     else {
       setAuthPending(true);
       setFormError('');
-      const displayName = form.name.trim()
-        || authUser?.user_metadata?.display_name
+      const displayName = authUser?.user_metadata?.display_name
         || authUser?.user_metadata?.full_name
+        || authUser?.user_metadata?.name
         || '바이블온 사용자';
       writeStoredValue(CURRENT_CHURCH_STORAGE_KEY, '');
       const savedProfile = readStoredValue('bibleon.personalProfile', {});
@@ -312,7 +249,7 @@ function OnboardingApp() {
     <main className="onboarding-root">
       <section className="onboarding-shell" aria-label="바이블온 회원가입 및 튜토리얼">
         <header className="onboarding-header">
-          {screen === 'signin' || screen === 'tutorial' ? (
+          {screen === 'tutorial' ? (
             <button className="onboarding-icon-button" type="button" aria-label="이전" onClick={goBack}>
               <ArrowLeft size={21} aria-hidden="true" />
             </button>
@@ -340,64 +277,8 @@ function OnboardingApp() {
 
             {formError && <p className="form-error" role="alert">{formError}</p>}
 
-            <button className="existing-account-button" type="button" onClick={() => {
-              setFormError('');
-              setAuthNotice('');
-              setScreen('signin');
-            }}>
-              이미 계정이 있나요? <strong>로그인</strong>
-            </button>
-
             <p className="auth-legal">계속하면 바이블온 이용약관과 개인정보 처리방침에 동의하게 됩니다.</p>
           </div>
-        )}
-
-        {screen === 'signin' && (
-          <form className="email-signup-view" onSubmit={submitEmailSignin} noValidate>
-            <div className="flow-heading">
-              <span>계정 로그인</span>
-              <h1>다시 만나서 반가워요</h1>
-            </div>
-
-            <div className="signup-fields">
-              <label className="signup-field">
-                <span>이메일</span>
-                <input
-                  autoComplete="email"
-                  inputMode="email"
-                  type="email"
-                  value={form.email}
-                  onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
-                  placeholder="name@example.com"
-                />
-              </label>
-              <label className="signup-field">
-                <span>비밀번호</span>
-                <div className="password-input">
-                  <input
-                    autoComplete="current-password"
-                    type={showPassword ? 'text' : 'password'}
-                    value={form.password}
-                    onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
-                    placeholder="비밀번호"
-                  />
-                  <button type="button" aria-label={showPassword ? '비밀번호 숨기기' : '비밀번호 보기'} onClick={() => setShowPassword((current) => !current)}>
-                    {showPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
-                  </button>
-                </div>
-              </label>
-            </div>
-
-            {formError && <p className="form-error" role="alert">{formError}</p>}
-            {authNotice && <p className="form-notice" role="status">{authNotice}</p>}
-
-            <button className="password-reset-button" type="button" disabled={authPending} onClick={requestPasswordReset}>
-              비밀번호를 잊었어요
-            </button>
-            <button className="onboarding-primary-button" type="submit" disabled={authPending}>
-              {authPending ? '로그인 중...' : '로그인'}
-            </button>
-          </form>
         )}
 
         {screen === 'tutorial' && (
@@ -535,7 +416,7 @@ function OnboardingApp() {
             <div>
               <span>가입 완료</span>
               <h1>바이블온을 시작할 준비가 됐어요</h1>
-              <p>{providers.find((provider) => provider.id === authMethod)?.label ?? '이메일'} 계정과 개인 설정이 준비되었습니다.</p>
+              <p>{providers.find((provider) => provider.id === authMethod)?.label ?? '연동'} 계정과 개인 설정이 준비되었습니다.</p>
             </div>
             <dl className="onboarding-summary">
               <div><dt>교회</dt><dd>{profile.churchStatus === 'member' ? profile.churchName : '개인으로 시작'}</dd></div>

@@ -7,25 +7,6 @@ function getRedirectUrl() {
   return new URL('/onboarding', window.location.origin).toString();
 }
 
-export async function signInWithEmail({ email, password }) {
-  if (!isSupabaseConfigured) return { mode: 'preview', user: null, session: null };
-  const client = requireSupabase();
-  const { data, error } = await client.auth.signInWithPassword({ email, password });
-  if (error) throw error;
-  if (data.user && data.session) setActivePersistenceUser(data.user.id);
-  return { mode: 'supabase', ...data };
-}
-
-export async function sendPasswordReset(email) {
-  if (!isSupabaseConfigured) return { mode: 'preview' };
-  const client = requireSupabase();
-  const { error } = await client.auth.resetPasswordForEmail(email, {
-    redirectTo: getRedirectUrl(),
-  });
-  if (error) throw error;
-  return { mode: 'supabase' };
-}
-
 export async function signInWithSocialProvider(provider) {
   if (!isSupabaseConfigured) return { mode: 'preview' };
   const configuredProvider = provider === 'naver'
