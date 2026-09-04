@@ -711,7 +711,7 @@ button[class*="backdrop"]:active,
 .global-settings-drawer {
   animation: global-settings-enter 210ms ease-out;
   background: var(--surface);
-  bottom: 80px;
+  bottom: 0;
   box-shadow: -10px 0 26px rgb(25 31 40 / 12%);
   display: flex;
   flex-direction: column;
