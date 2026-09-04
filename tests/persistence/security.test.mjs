@@ -11,6 +11,14 @@ test('account tables enable RLS and bind writes to auth.uid()', async () => {
   assert.match(sql, /with check \(\(select auth\.uid\(\)\) = user_id\)/i);
 });
 
+test('Plus entitlement is readable by its owner but not client-writable', async () => {
+  const sql = await readFile(new URL('../../supabase/migrations/20260905010000_plus_entitlements.sql', import.meta.url), 'utf8');
+  assert.match(sql, /alter table public\.user_subscriptions enable row level security/i);
+  assert.match(sql, /grant select on public\.user_subscriptions to authenticated/i);
+  assert.match(sql, /using \(\(select auth\.uid\(\)\) = user_id\)/i);
+  assert.doesNotMatch(sql, /grant\s+(insert|update|delete|all)[^;]*user_subscriptions[^;]*authenticated/i);
+});
+
 test('forged Storage paths are rejected before upload', () => {
   assert.equal(validateStorageObjectPath({
     bucket: 'avatars',
@@ -29,4 +37,3 @@ test('forged Storage paths are rejected before upload', () => {
     conversationIds: ['conversation-a'],
   }), /허용되지 않은 Storage 경로/);
 });
-

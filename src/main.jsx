@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import {
   Award,
+  AudioLines,
   Bell,
   BellOff,
   Bookmark,
@@ -16,6 +17,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  Crown,
   FileText,
   Folder,
   FolderPlus,
@@ -37,6 +39,7 @@ import {
   Moon,
   NotebookPen,
   PenLine,
+  Palette,
   Play,
   Plus,
   Reply,
@@ -45,6 +48,7 @@ import {
   Send,
   Settings,
   ShieldCheck,
+  Sparkles,
   Star,
   ThumbsUp,
   Trash2,
@@ -76,6 +80,7 @@ import { personalDataRepository } from './data/repositories/personalDataReposito
 import { churchRepository } from './data/repositories/churchRepository';
 import { friendRepository } from './data/repositories/friendRepository';
 import { messageRepository } from './data/repositories/messageRepository';
+import { subscriptionRepository } from './data/repositories/subscriptionRepository';
 import { buildMessageViewModel } from './data/repositories/messageViewAdapter';
 import {
   importGuestAccountData,
@@ -448,16 +453,6 @@ const initialRecentNotifications = [
     icon: Church,
     unread: true,
     destination: { tab: 'church', kind: 'worship' },
-  },
-  {
-    id: 'notice-roadmap',
-    type: '말씀 로드맵',
-    title: '오늘의 말씀',
-    body: '시편 23편을 천천히 읽어보세요.',
-    time: '오늘 오전 7:00',
-    icon: BookOpen,
-    unread: false,
-    destination: { tab: 'bible', kind: 'verse', reference: '시편 23:1' },
   },
   {
     id: 'notice-qt',
@@ -856,6 +851,75 @@ const HOME_CHAT_ACTIVE_KEY = 'bibleon.activeHomeChatV1';
 const HOME_CHAT_LEGACY_KEY = 'bibleon.homeTestMessagesV2';
 const HOME_CHAT_DELETE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const ACCOUNT_ONBOARDING_STORAGE_KEY = 'bibleon.accountOnboardingV1';
+const FREE_DAILY_CHAT_TOKEN_LIMIT = 2000;
+const PLUS_DAILY_CHAT_TOKEN_LIMIT = FREE_DAILY_CHAT_TOKEN_LIMIT * 10;
+const DEFAULT_NOTIFICATION_PREFERENCES = Object.freeze({
+  dailyVerse: true,
+  readingReminder: true,
+});
+const PLUS_FEATURES = [
+  { id: 'analysis', title: '성경 분석', description: '절을 길게 눌러 근거와 함께 분석해요.', icon: Search },
+  { id: 'bible-memo', title: '성경 메모', description: '말씀마다 나만의 기록을 이어서 남겨요.', icon: NotebookPen },
+  { id: 'chat-limit', title: '채팅 한도 10배', description: '하루 질문 토큰을 기본 한도의 10배로 늘려요.', icon: MessageCircle },
+  { id: 'worship-memo', title: '예배 메모', description: '예배별 메모를 모아 다시 확인해요.', icon: PenLine },
+  { id: 'worship-summary', title: '예배 음성 요약', description: '예배 음성을 기록하고 핵심 내용을 정리해요.', icon: AudioLines },
+  { id: 'theme', title: '테마 커스터마이즈', description: '바이블온의 포인트 색상을 취향에 맞게 바꿔요.', icon: Palette },
+];
+const ACCENT_THEME_OPTIONS = [
+  { id: 'violet', label: '보라', color: '#4b4298' },
+  { id: 'mint', label: '민트', color: '#267a6a' },
+  { id: 'rose', label: '로즈', color: '#9b5068' },
+  { id: 'sky', label: '하늘', color: '#3f6f9d' },
+];
+
+function normalizeNotificationPreferences(value) {
+  return {
+    dailyVerse: value?.dailyVerse ?? DEFAULT_NOTIFICATION_PREFERENCES.dailyVerse,
+    readingReminder: value?.readingReminder ?? DEFAULT_NOTIFICATION_PREFERENCES.readingReminder,
+  };
+}
+
+function normalizeChatUsage(value) {
+  const date = getSeoulDateKey();
+  if (value?.date !== date) return { date, tokens: 0 };
+  return { date, tokens: Math.max(0, Number(value.tokens) || 0) };
+}
+
+function estimateChatTokens(text) {
+  const normalized = text.trim();
+  if (!normalized) return 0;
+  return Math.max(1, Math.ceil(normalized.length / 2.5) + 24);
+}
+
+function buildGuidanceNotifications(preferences, readingReminderDays) {
+  const items = [];
+  if (preferences.dailyVerse) {
+    items.push({
+      id: 'notice-daily-verse',
+      type: '말씀 추천',
+      title: '오늘의 추천 말씀이에요!',
+      body: '시편 23편 1절을 천천히 읽어보세요.',
+      time: '오늘',
+      icon: Sparkles,
+      unread: true,
+      destination: { tab: 'bible', kind: 'verse', reference: '시편 23:1' },
+    });
+  }
+  if (preferences.readingReminder && readingReminderDays >= 1) {
+    items.push({
+      id: 'notice-reading-reminder',
+      type: '읽기 알림',
+      title: `마지막으로 성경을 읽으신 지 ${readingReminderDays}일이 지났어요.`,
+      body: '잠시 시간을 내어 마지막 말씀부터 이어 읽어보세요.',
+      time: '오늘',
+      icon: BookOpen,
+      unread: true,
+      destination: { tab: 'bible', kind: 'continue' },
+    });
+  }
+  return items;
+}
+
 const APP_TUTORIAL_STEPS = [
   {
     target: 'home-chatbot',
@@ -1128,7 +1192,9 @@ function useHeavyOverscroll(rootRef) {
 }
 
 function App() {
-  const tutorialPreviewMode = new URLSearchParams(window.location.search).get('tutorial') === '1';
+  const searchParams = new URLSearchParams(window.location.search);
+  const tutorialPreviewMode = searchParams.get('tutorial') === '1';
+  const plusPreviewMode = searchParams.get('plus') === '1';
   const appShellRef = useRef(null);
   const workspaceRef = useRef(null);
   const tutorialSnapshotRef = useRef(null);
@@ -1165,6 +1231,9 @@ function App() {
   const [accountOnboarding, setAccountOnboarding] = useState(() => (
     readStoredValue(ACCOUNT_ONBOARDING_STORAGE_KEY, {})
   ));
+  const [subscription, setSubscription] = useState({ plan: 'free', status: 'inactive', currentPeriodEnd: null });
+  const [plusSheetFeature, setPlusSheetFeature] = useState('');
+  const [chatAdVisible, setChatAdVisible] = useState(true);
   const [memoViewMode, setMemoViewMode] = useState(() => normalizeMemoViewMode(
     readStoredValue(ACCOUNT_ONBOARDING_STORAGE_KEY, {}).memoViewMode
   ));
@@ -1222,6 +1291,18 @@ function App() {
   const [messageMembers, setMessageMembers] = useState(knownMessageMembers);
   const [serverChurchWorkspace, setServerChurchWorkspace] = useState(null);
 
+  const isPlus = plusPreviewMode || subscription.plan === 'plus';
+  const notificationPreferences = normalizeNotificationPreferences(accountOnboarding.notificationPreferences);
+  const accentTheme = isPlus && ACCENT_THEME_OPTIONS.some(({ id }) => id === accountOnboarding.accentTheme)
+    ? accountOnboarding.accentTheme
+    : 'violet';
+  const chatUsage = normalizeChatUsage(accountOnboarding.chatUsage);
+  const chatTokenLimit = isPlus ? PLUS_DAILY_CHAT_TOKEN_LIMIT : FREE_DAILY_CHAT_TOKEN_LIMIT;
+  const lastBibleReadAt = Number(accountOnboarding.lastBibleReadAt) || 0;
+  const readingReminderDays = lastBibleReadAt
+    ? Math.max(0, Math.floor((Date.now() - lastBibleReadAt) / (24 * 60 * 60 * 1000)))
+    : 0;
+
   const selectedBook = bibleBooks.find((book) => book.id === selectedBookId) ?? bibleBooks[0];
   const currentChurch = useMemo(() => (
     getRegisteredChurches(churchProfiles).find(({ id }) => id === currentChurchId) ?? null
@@ -1252,9 +1333,11 @@ function App() {
     Promise.all([
       accountRepository.loadCurrentAccount(),
       personalDataRepository.loadCurrent().catch(() => null),
-    ]).then(async ([account, personal]) => {
+      subscriptionRepository.loadCurrent().catch(() => null),
+    ]).then(async ([account, personal, currentSubscription]) => {
       if (!active || !account) return;
       setCurrentAccountUser(account.user);
+      if (currentSubscription) setSubscription(currentSubscription);
       if (account.profile) {
         const profile = { ...account.profile };
         if (profile.avatarPath) {
@@ -1477,6 +1560,10 @@ function App() {
     };
   }, [darkModeEnd, darkModeStart, themeControlMode, themePreference]);
 
+  useEffect(() => {
+    document.documentElement.dataset.accent = accentTheme;
+  }, [accentTheme]);
+
   const selectBiblePassage = (bookId = selectedBookId, chapter = selectedChapter) => {
     setSelectedBookId(bookId);
     setSelectedChapter(chapter);
@@ -1607,8 +1694,58 @@ function App() {
     }
   };
 
+  const requestPlus = (featureId = '') => {
+    setPlusSheetFeature(featureId);
+  };
+
+  const updateNotificationPreference = (key, enabled) => {
+    setAccountOnboarding((current) => ({
+      ...current,
+      notificationPreferences: {
+        ...normalizeNotificationPreferences(current.notificationPreferences),
+        [key]: enabled,
+      },
+    }));
+  };
+
+  const updateAccentTheme = (nextTheme) => {
+    if (!isPlus) {
+      requestPlus('theme');
+      return;
+    }
+    setAccountOnboarding((current) => ({ ...current, accentTheme: nextTheme }));
+  };
+
+  const consumeChatTokens = (requestedTokens) => {
+    const requested = Math.max(0, Number(requestedTokens) || 0);
+    const usage = normalizeChatUsage(accountOnboarding.chatUsage);
+    if (usage.tokens + requested > chatTokenLimit) {
+      if (!isPlus) requestPlus('chat-limit');
+      return false;
+    }
+    setAccountOnboarding((current) => {
+      const currentUsage = normalizeChatUsage(current.chatUsage);
+      return {
+        ...current,
+        chatUsage: { date: currentUsage.date, tokens: currentUsage.tokens + requested },
+      };
+    });
+    return true;
+  };
+
+  const updateWorshipMemo = (serviceId, nextMemo) => {
+    setAccountOnboarding((current) => ({
+      ...current,
+      worshipMemos: {
+        ...(current.worshipMemos ?? {}),
+        [serviceId]: nextMemo,
+      },
+    }));
+  };
+
   const recordVerseRead = (verse) => {
     const dateKey = getSeoulDateKey();
+    setAccountOnboarding((current) => ({ ...current, lastBibleReadAt: Date.now() }));
     setPopularityData((current) => ({
       version: 1,
       days: {
@@ -2135,6 +2272,9 @@ function App() {
         </div>
       )}
       <section className="workspace" aria-label="바이블온 앱" ref={workspaceRef}>
+        {activeTab === 'home' && isHomeChatOpen && chatAdVisible && (
+          <ChatBannerAd onClose={() => setChatAdVisible(false)} />
+        )}
         <Topbar
           activeTab={activeTab}
           selectedTranslation={selectedTranslation}
@@ -2156,6 +2296,14 @@ function App() {
           currentChurch={currentChurch}
           churchAccess={churchAccess}
           serverChurchWorkspace={serverChurchWorkspace}
+          isPlus={isPlus}
+          plusPreviewMode={plusPreviewMode}
+          onRequestPlus={requestPlus}
+          notificationPreferences={notificationPreferences}
+          onNotificationPreferenceChange={updateNotificationPreference}
+          readingReminderDays={readingReminderDays}
+          accentTheme={accentTheme}
+          onAccentThemeChange={updateAccentTheme}
           onSignOut={async () => {
             await signOutCurrentAccount();
             window.location.assign('/onboarding');
@@ -2188,6 +2336,11 @@ function App() {
             onMemoViewModeChange={updateMemoViewMode}
             popularityRankings={popularityRankings}
             onOpenBibleVerse={openBibleVerse}
+            isPlus={isPlus}
+            onRequestPlus={requestPlus}
+            chatTokensUsed={chatUsage.tokens}
+            chatTokenLimit={chatTokenLimit}
+            onConsumeChatTokens={consumeChatTokens}
           />
         )}
         {activeTab === 'bible' && (
@@ -2221,6 +2374,8 @@ function App() {
             tutorialStep={appTutorialStep}
             onTutorialReadToggle={handleTutorialReadToggle}
             onTutorialVerseActionsOpened={handleTutorialVerseActionsOpened}
+            isPlus={isPlus}
+            onRequestPlus={requestPlus}
           />
         )}
         {activeTab === 'church' && (
@@ -2252,6 +2407,10 @@ function App() {
               writeStoredValue('bibleon.churchAdminMemberId', member.id);
               setChurchAccess({ authority: '성도', managerDepartmentId: '' });
             }}
+            isPlus={isPlus}
+            onRequestPlus={requestPlus}
+            worshipMemos={accountOnboarding.worshipMemos ?? {}}
+            onWorshipMemoChange={updateWorshipMemo}
           />
         )}
         {activeTab === 'messages' && (
@@ -2323,7 +2482,66 @@ function App() {
           onKeep={() => setCompletionCelebration(null)}
         />
       )}
+      {plusSheetFeature && (
+        <PlusSubscriptionSheet
+          activeFeature={plusSheetFeature}
+          isPlus={isPlus}
+          previewMode={plusPreviewMode}
+          onClose={() => setPlusSheetFeature('')}
+        />
+      )}
     </main>
+  );
+}
+
+function ChatBannerAd({ onClose }) {
+  return (
+    <aside className="chat-banner-ad" aria-label="배너 광고">
+      <span>AD</span>
+      <div><strong>하루의 말씀을 가까이</strong><small>바이블온과 함께 천천히 읽어보세요.</small></div>
+      <button type="button" aria-label="배너 광고 닫기" onClick={onClose}><X size={16} aria-hidden="true" /></button>
+    </aside>
+  );
+}
+
+function PlusSubscriptionSheet({ activeFeature, isPlus, previewMode, onClose }) {
+  const [billingNotice, setBillingNotice] = useState('');
+  const { isClosing, dismiss } = useSlideDismiss(onClose);
+  return createPortal(
+    <div className={`plus-subscription-layer ${isClosing ? 'is-closing' : ''}`}>
+      <button className="plus-subscription-backdrop" type="button" aria-label="바이블온 플러스 닫기" onClick={() => dismiss()} />
+      <section className="plus-subscription-sheet" role="dialog" aria-modal="true" aria-labelledby="plus-subscription-title">
+        <header>
+          <span className="plus-subscription-symbol"><Crown size={23} aria-hidden="true" /></span>
+          <div><h2 id="plus-subscription-title">바이블온 플러스</h2><p>말씀을 더 깊이 읽고 기록하는 방법</p></div>
+          <button type="button" aria-label="바이블온 플러스 닫기" onClick={() => dismiss()}><X size={21} aria-hidden="true" /></button>
+        </header>
+        <div className="plus-feature-list">
+          {PLUS_FEATURES.map((feature) => {
+            const FeatureIcon = feature.icon;
+            return (
+              <article className={activeFeature === feature.id ? 'is-focused' : ''} key={feature.id}>
+                <span><FeatureIcon size={18} aria-hidden="true" /></span>
+                <div><strong>{feature.title}</strong><small>{feature.description}</small></div>
+                {isPlus && <Check size={17} aria-label="사용 가능" />}
+              </article>
+            );
+          })}
+        </div>
+        <footer>
+          <div><strong>{isPlus ? 'Plus가 활성화되어 있어요' : '월 1,500원'}</strong><small>{previewMode ? '테스트 미리보기 모드' : isPlus ? '모든 Plus 기능 사용 가능' : '결제 및 해지는 스토어 정책에 따라 제공됩니다.'}</small></div>
+          <button type="button" className={isPlus ? 'is-active' : ''} onClick={() => {
+            if (isPlus) dismiss();
+            else {
+              setBillingNotice('구독 결제 연결은 출시 준비 단계에서 제공할 예정이에요.');
+              window.setTimeout(() => setBillingNotice(''), 2200);
+            }
+          }}>{isPlus ? '확인' : 'Plus 시작하기'}</button>
+          {billingNotice && <p role="status">{billingNotice}</p>}
+        </footer>
+      </section>
+    </div>,
+    document.body
   );
 }
 
@@ -2348,6 +2566,14 @@ function Topbar({
   currentChurch,
   churchAccess,
   serverChurchWorkspace,
+  isPlus,
+  plusPreviewMode,
+  onRequestPlus,
+  notificationPreferences,
+  onNotificationPreferenceChange,
+  readingReminderDays,
+  accentTheme,
+  onAccentThemeChange,
   onSignOut,
 }) {
   const [notificationOpen, setNotificationOpen] = useState(false);
@@ -2355,12 +2581,24 @@ function Topbar({
   const [settingsPage, setSettingsPage] = useState('root');
   const [accountActionMessage, setAccountActionMessage] = useState('');
   const [uidCopied, setUidCopied] = useState(false);
-  const [notifications, setNotifications] = useState(initialRecentNotifications);
+  const [notifications, setNotifications] = useState(() => [
+    ...buildGuidanceNotifications(notificationPreferences, readingReminderDays),
+    ...initialRecentNotifications,
+  ]);
   const [messageAlerts, setMessageAlerts] = useState(true);
   const [churchAlerts, setChurchAlerts] = useState(true);
   const { isClosing: notificationClosing, dismiss: dismissNotification } = useSlideDismiss(() => setNotificationOpen(false), 180);
   const { isClosing: settingsClosing, dismiss: dismissSettings } = useSlideDismiss(() => setSettingsOpen(false));
   const unreadCount = notifications.filter(({ unread }) => unread).length;
+
+  useEffect(() => {
+    const generatedIds = new Set(['notice-daily-verse', 'notice-reading-reminder']);
+    const generated = buildGuidanceNotifications(notificationPreferences, readingReminderDays);
+    setNotifications((current) => [
+      ...generated.map((item) => current.find(({ id }) => id === item.id) ?? item),
+      ...current.filter(({ id }) => !generatedIds.has(id)),
+    ]);
+  }, [notificationPreferences.dailyVerse, notificationPreferences.readingReminder, readingReminderDays]);
 
   const markNotificationRead = (notificationId) => {
     setNotifications((current) => current.map((notification) => (
@@ -2531,6 +2769,15 @@ function Topbar({
                   </div>
                 </section>
 
+                <section className="settings-group settings-plus-group">
+                  <h3>구독</h3>
+                  <button className="settings-plus-entry" type="button" onClick={() => onRequestPlus('overview')}>
+                    <span className="settings-plus-mark"><Crown size={19} aria-hidden="true" /></span>
+                    <span><strong>바이블온 플러스</strong><small>{isPlus ? `${plusPreviewMode ? '미리보기 · ' : ''}Plus 사용 중` : '분석, 메모, 음성 요약과 테마'}</small></span>
+                    <b className={isPlus ? 'is-active' : ''}>{isPlus ? 'Plus' : '월 1,500원'}</b>
+                  </button>
+                </section>
+
                 <section className="settings-group">
               <h3>성경 읽기</h3>
               <div className="settings-option-row">
@@ -2577,6 +2824,24 @@ function Topbar({
                 <span><Moon size={20} aria-hidden="true" /><span><strong>다크 모드</strong><small>{themeControlMode === 'always' ? (alwaysDarkEnabled ? '항상 사용 중' : '라이트 모드 사용 중') : themeControlMode === 'system' ? '시스템 설정으로 자동 적용' : `${darkModeStart}부터 ${darkModeEnd}까지 자동 적용`}</small></span></span>
                 <i className={darkModeToggleChecked ? 'is-on' : ''}><b /></i>
               </button>
+              <div className="settings-accent-block">
+                <div><Palette size={20} aria-hidden="true" /><span><strong>포인트 테마</strong><small>{isPlus ? '앱의 포인트 색상을 선택해요' : 'Plus에서 사용할 수 있어요'}</small></span></div>
+                <div className="settings-accent-options" role="group" aria-label="포인트 테마 선택">
+                  {ACCENT_THEME_OPTIONS.map((option) => (
+                    <button
+                      className={accentTheme === option.id ? 'is-active' : ''}
+                      type="button"
+                      aria-label={`${option.label} 테마${accentTheme === option.id ? ', 선택됨' : ''}`}
+                      aria-pressed={accentTheme === option.id}
+                      key={option.id}
+                      onClick={() => onAccentThemeChange(option.id)}
+                    >
+                      <i style={{ background: option.color }} />
+                      {accentTheme === option.id && <Check size={13} aria-hidden="true" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
                 </section>
 
                 <section className="settings-group">
@@ -2600,6 +2865,26 @@ function Topbar({
               >
                 <span><Church size={20} aria-hidden="true" /><span><strong>교회 알림</strong><small>공지와 예배 정보 업데이트</small></span></span>
                 <i className={churchAlerts ? 'is-on' : ''}><b /></i>
+              </button>
+              <button
+                className="settings-toggle-row"
+                type="button"
+                role="switch"
+                aria-checked={notificationPreferences.dailyVerse}
+                onClick={() => onNotificationPreferenceChange('dailyVerse', !notificationPreferences.dailyVerse)}
+              >
+                <span><Sparkles size={20} aria-hidden="true" /><span><strong>오늘의 추천 말씀</strong><small>매일 읽을 말씀을 알려드려요</small></span></span>
+                <i className={notificationPreferences.dailyVerse ? 'is-on' : ''}><b /></i>
+              </button>
+              <button
+                className="settings-toggle-row"
+                type="button"
+                role="switch"
+                aria-checked={notificationPreferences.readingReminder}
+                onClick={() => onNotificationPreferenceChange('readingReminder', !notificationPreferences.readingReminder)}
+              >
+                <span><BookOpen size={20} aria-hidden="true" /><span><strong>성경 읽기 알림</strong><small>읽지 않은 기간을 계산해 알려드려요</small></span></span>
+                <i className={notificationPreferences.readingReminder ? 'is-on' : ''}><b /></i>
               </button>
                 </section>
 
@@ -2971,8 +3256,14 @@ function AppTutorial({ step, readPracticePhase, longPressDone, onNext, onSkip })
             <h2 id="app-tutorial-title">{currentStep.title}</h2>
             <p aria-live="polite">{description}</p>
             <footer className={isInteractive ? 'is-guided' : ''}>
-              <button type="button" onClick={onSkip}>건너뛰기</button>
-              {!isInteractive && <button type="button" onClick={onNext}>{step === APP_TUTORIAL_STEPS.length - 1 ? '시작하기' : '다음'}</button>}
+              {isInteractive ? (
+                <span className="app-tutorial-guided-hint">강조된 영역을 직접 사용하면 다음 안내로 이동해요.</span>
+              ) : (
+                <>
+                  <button type="button" onClick={onSkip}>건너뛰기</button>
+                  <button type="button" onClick={onNext}>{step === APP_TUTORIAL_STEPS.length - 1 ? '시작하기' : '다음'}</button>
+                </>
+              )}
             </footer>
           </section>
         </>
@@ -3008,10 +3299,16 @@ function HomeView({
   onMemoViewModeChange,
   popularityRankings,
   onOpenBibleVerse,
+  isPlus,
+  onRequestPlus,
+  chatTokensUsed,
+  chatTokenLimit,
+  onConsumeChatTokens,
 }) {
   const [question, setQuestion] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [isMemoLibraryOpen, setIsMemoLibraryOpen] = useState(false);
+  const [chatLimitNotice, setChatLimitNotice] = useState('');
   const answerEndRef = useRef(null);
   const homePageRef = useRef(null);
   const homeContentClusterRef = useRef(null);
@@ -3101,6 +3398,14 @@ function HomeView({
   const askBibleQuestion = async (nextQuestion) => {
     const text = nextQuestion.trim();
     if (!text || isSearching) return;
+    const estimatedTokens = estimateChatTokens(text);
+    if (!onConsumeChatTokens(estimatedTokens)) {
+      setChatLimitNotice(isPlus
+        ? '오늘 사용할 수 있는 채팅 토큰을 모두 사용했어요.'
+        : '오늘의 기본 채팅 한도를 모두 사용했어요.');
+      window.setTimeout(() => setChatLimitNotice(''), 2200);
+      return;
+    }
 
     const userMessage = { id: `question-${Date.now()}`, role: 'user', text };
     const roomId = prepareChat(text, !isChatOpen);
@@ -3196,7 +3501,7 @@ function HomeView({
 
               <PopularBibleTop rankings={popularityRankings} onOpenBibleVerse={onOpenBibleVerse} />
 
-              <button className="home-memo-entry" type="button" onClick={() => setIsMemoLibraryOpen(true)}>
+              <button className="home-memo-entry" type="button" onClick={() => isPlus ? setIsMemoLibraryOpen(true) : onRequestPlus('bible-memo')}>
                 <span className="home-memo-icon"><NotebookPen size={20} aria-hidden="true" /></span>
                 <span className="home-memo-copy">
                   <strong>나의 메모</strong>
@@ -3222,6 +3527,8 @@ function HomeView({
                 favoriteRefs={favoriteRefs}
                 onOpenBibleVerse={onOpenBibleVerse}
                 selectedTranslation={selectedTranslation}
+                isPlus={isPlus}
+                onRequestPlus={onRequestPlus}
               />
             </div>
           </section>
@@ -3232,6 +3539,7 @@ function HomeView({
         <section className="home-rag-chat" aria-label="바이블온 대화" aria-live="polite">
           <div className="home-chat-toolbar">
             <strong>{activeChatTitle}</strong>
+            <small>오늘 {chatTokensUsed.toLocaleString()} / {chatTokenLimit.toLocaleString()} 토큰</small>
           </div>
           <div className="home-chat-messages">
             {ragMessages.map((message) => (
@@ -3266,6 +3574,8 @@ function HomeView({
           </div>
         </section>
       )}
+
+      {chatLimitNotice && <div className="home-chat-limit-notice" role="status">{chatLimitNotice}</div>}
 
       {isMemoLibraryOpen && (
         <MemoLibraryScreen
@@ -3863,6 +4173,8 @@ function BibleView({
   tutorialStep = null,
   onTutorialReadToggle,
   onTutorialVerseActionsOpened,
+  isPlus,
+  onRequestPlus,
 }) {
   const [selectedVerse, setSelectedVerse] = useState(null);
   const [verseActionAnchor, setVerseActionAnchor] = useState(null);
@@ -4120,6 +4432,10 @@ function BibleView({
   };
 
   const openNoteEditor = (verse) => {
+    if (!isPlus) {
+      onRequestPlus('bible-memo');
+      return;
+    }
     setSelectedVerse(null);
     setVerseActionAnchor(null);
     setMultiActionAnchor(null);
@@ -4195,6 +4511,10 @@ function BibleView({
   };
 
   const openVerseAnalysis = () => {
+    if (!isPlus) {
+      onRequestPlus('analysis');
+      return;
+    }
     showActionNotice('말씀 분석 기능을 준비하고 있어요.');
   };
 
@@ -4856,6 +5176,10 @@ function ChurchView({
   onDelegateChurchAdmin,
   serverChurchWorkspace,
   onSearchChurches,
+  isPlus,
+  onRequestPlus,
+  worshipMemos,
+  onWorshipMemoChange,
 }) {
   const [communityNoticeOpen, setCommunityNoticeOpen] = useState(false);
   const [qtCreatorOpen, setQtCreatorOpen] = useState(false);
@@ -4866,6 +5190,7 @@ function ChurchView({
   const [announcementsExpanded, setAnnouncementsExpanded] = useState(false);
   const [worshipExpanded, setWorshipExpanded] = useState(false);
   const [worshipReadyNoticeOpen, setWorshipReadyNoticeOpen] = useState(false);
+  const [worshipMemoOpen, setWorshipMemoOpen] = useState(false);
   const [churchRegistrationOpen, setChurchRegistrationOpen] = useState(false);
   const [churchAdminRegistrationOpen, setChurchAdminRegistrationOpen] = useState(false);
   const [leaveChurchConfirmOpen, setLeaveChurchConfirmOpen] = useState(false);
@@ -5103,6 +5428,9 @@ function ChurchView({
                     <BookOpen size={17} aria-hidden="true" /><span><strong>보조 말씀</strong><small>{scheduledWorship.supportVerse}</small></span><ChevronRight size={17} />
                   </button>
                 )}
+                <button type="button" onClick={() => isPlus ? setWorshipMemoOpen(true) : onRequestPlus('worship-memo')}>
+                  <NotebookPen size={17} aria-hidden="true" /><span><strong>예배 메모</strong><small>{isPlus ? (worshipMemos[scheduledWorship.id]?.memo ? '작성한 메모 이어보기' : '예배 내용을 기록해요') : '바이블온 Plus'}</small></span><ChevronRight size={17} />
+                </button>
                 {scheduledWorship.hymn && (
                   <button type="button" onClick={() => setWorshipReadyNoticeOpen(true)}>
                     <SixteenthNoteIcon size={17} aria-hidden="true" /><span><strong>찬양</strong><small>{scheduledWorship.hymn}</small></span><ChevronRight size={17} />
@@ -5144,6 +5472,14 @@ function ChurchView({
 
       {communityNoticeOpen && <ChurchReadyNotice onClose={() => setCommunityNoticeOpen(false)} />}
       {worshipReadyNoticeOpen && <ChurchReadyNotice title="준비중" description="찬양 듣기 기능을 준비하고 있어요." onClose={() => setWorshipReadyNoticeOpen(false)} />}
+      {worshipMemoOpen && scheduledWorship && (
+        <WorshipMemoScreen
+          worship={scheduledWorship}
+          value={worshipMemos[scheduledWorship.id] ?? { memo: '', transcript: '', summary: '' }}
+          onChange={(nextValue) => onWorshipMemoChange(scheduledWorship.id, nextValue)}
+          onClose={() => setWorshipMemoOpen(false)}
+        />
+      )}
 
       {managementWarningOpen && (
         <ConfirmDialog
@@ -5231,6 +5567,101 @@ function ChurchView({
         />
       )}
     </div>
+  );
+}
+
+function summarizeWorshipTranscript(transcript) {
+  const normalized = transcript.trim().replace(/\s+/g, ' ');
+  if (!normalized) return '';
+  const sentences = normalized.split(/(?<=[.!?]|다\.)\s+/).filter(Boolean);
+  const selected = (sentences.length > 1 ? sentences.slice(0, 3) : [normalized]).join(' ');
+  return selected.length > 280 ? `${selected.slice(0, 277)}...` : selected;
+}
+
+function WorshipMemoScreen({ worship, value, onChange, onClose }) {
+  const [isListening, setIsListening] = useState(false);
+  const [speechMessage, setSpeechMessage] = useState('');
+  const recognitionRef = useRef(null);
+  const transcriptBaseRef = useRef(value.transcript ?? '');
+  const swipeBack = useSwipeBack(onClose);
+
+  useEffect(() => () => recognitionRef.current?.stop?.(), []);
+
+  const updateValue = (patch) => onChange({
+    memo: value.memo ?? '',
+    transcript: value.transcript ?? '',
+    summary: value.summary ?? '',
+    updatedAt: Date.now(),
+    ...patch,
+  });
+
+  const toggleListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop?.();
+      return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setSpeechMessage('이 브라우저에서는 음성 인식을 지원하지 않아요. 휴대폰 Chrome에서 다시 시도해 주세요.');
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    transcriptBaseRef.current = value.transcript?.trim() ?? '';
+    recognition.lang = 'ko-KR';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onstart = () => { setSpeechMessage('말씀을 듣고 있어요.'); setIsListening(true); };
+    recognition.onend = () => { setIsListening(false); setSpeechMessage('음성 기록이 멈췄어요.'); };
+    recognition.onerror = () => { setIsListening(false); setSpeechMessage('음성을 인식하지 못했어요. 마이크 권한을 확인해 주세요.'); };
+    recognition.onresult = (event) => {
+      const recognized = Array.from(event.results).map((result) => result[0].transcript).join(' ').trim();
+      const transcript = [transcriptBaseRef.current, recognized].filter(Boolean).join(' ');
+      updateValue({ transcript, summary: '' });
+    };
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
+  return (
+    <section
+      className={`worship-memo-screen ${swipeBack.className}`}
+      style={swipeBack.style}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="worship-memo-title"
+      {...swipeBack.handlers}
+    >
+      <header>
+        <button type="button" aria-label="예배 메모 닫기" onClick={onClose}><ChevronLeft size={23} aria-hidden="true" /></button>
+        <h2 id="worship-memo-title">예배 메모</h2>
+        <span className="plus-mini-badge">Plus</span>
+      </header>
+      <div className="worship-memo-body">
+        <section className="worship-memo-context">
+          <span>{worship.serviceDate || worship.createdAt}</span>
+          <strong>{worship.title}</strong>
+          <small>{worship.coreVerse}</small>
+        </section>
+        <label className="worship-memo-field">
+          <span>나의 메모</span>
+          <textarea value={value.memo ?? ''} onChange={(event) => updateValue({ memo: event.target.value })} placeholder="예배에서 마음에 남은 내용을 적어보세요" />
+        </label>
+        <section className="worship-audio-summary">
+          <header><div><strong>음성 요약</strong><small>말한 내용을 기록하고 핵심 문장을 정리해요.</small></div><AudioLines size={20} aria-hidden="true" /></header>
+          <button className={isListening ? 'is-listening' : ''} type="button" onClick={toggleListening}>
+            <Mic size={18} aria-hidden="true" />{isListening ? '기록 멈추기' : '음성 기록 시작'}
+          </button>
+          {speechMessage && <p className="worship-speech-message" role="status">{speechMessage}</p>}
+          {value.transcript && <div className="worship-transcript"><span>인식된 내용</span><p>{value.transcript}</p></div>}
+          {value.transcript && (
+            <button className="worship-summary-action" type="button" onClick={() => updateValue({ summary: summarizeWorshipTranscript(value.transcript) })}>
+              <Sparkles size={17} aria-hidden="true" />핵심 요약 만들기
+            </button>
+          )}
+          {value.summary && <div className="worship-summary-result"><span>요약</span><p>{value.summary}</p></div>}
+        </section>
+      </div>
+    </section>
   );
 }
 
@@ -6405,7 +6836,7 @@ function PopularBibleTop({ rankings, onOpenBibleVerse }) {
   );
 }
 
-function HomeRecommendations({ query, setQuery, selectBiblePassage, onOpenBibleVerse, selectedTranslation }) {
+function HomeRecommendations({ query, setQuery, selectBiblePassage, onOpenBibleVerse, selectedTranslation, isPlus, onRequestPlus }) {
   const [recommendations, setRecommendations] = useState([]);
   const [searching, setSearching] = useState(false);
   const normalizedQuery = query.trim();
@@ -6477,10 +6908,10 @@ function HomeRecommendations({ query, setQuery, selectBiblePassage, onOpenBibleV
         )}
       </Section>
 
-      <section className="premium-strip">
+      <button className="premium-strip" type="button" onClick={() => onRequestPlus('overview')}>
         <div><span>바이블온 플러스</span><strong>개인화 말씀 분석과 맞춤 로드맵</strong></div>
-        <span>월 1,500원</span>
-      </section>
+        <span>{isPlus ? '사용 중' : '월 1,500원'}</span>
+      </button>
     </>
   );
 }
