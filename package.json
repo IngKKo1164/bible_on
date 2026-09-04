@@ -5,10 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "vite build",
+    "check:persistence": "node scripts/check-persistence-boundaries.mjs",
+    "test:supabase:remote": "node scripts/check-supabase-remote.mjs",
+    "test:persistence": "node --test tests/persistence",
+    "test": "npm run check:persistence && npm run test:persistence",
+    "build": "npm run check:persistence && vite build",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "@supabase/supabase-js": "2.100.0",
     "@vitejs/plugin-react": "^4.3.4",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",

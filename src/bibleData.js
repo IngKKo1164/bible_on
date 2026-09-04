@@ -72,7 +72,24 @@ const translationSources = {
   RNKSV: { directory: 'rnksv', sourceId: 'RNKSV' },
 };
 
+const BIBLE_CACHE_NAME = 'bibleon-bible-v1';
 const bookCache = new Map();
+
+async function fetchBibleResource(resourceUrl) {
+  if (!('caches' in window)) return fetch(resourceUrl);
+
+  try {
+    const cache = await window.caches.open(BIBLE_CACHE_NAME);
+    const cachedResponse = await cache.match(resourceUrl);
+    if (cachedResponse) return cachedResponse;
+
+    const response = await fetch(resourceUrl);
+    if (response.ok) await cache.put(resourceUrl, response.clone());
+    return response;
+  } catch {
+    return fetch(resourceUrl);
+  }
+}
 
 async function loadBibleBook(translationId, book) {
   const translationSource = translationSources[translationId];
@@ -83,7 +100,7 @@ async function loadBibleBook(translationId, book) {
   if (data) return data;
 
   const baseUrl = import.meta.env.BASE_URL ?? '/';
-  const response = await fetch(`${baseUrl}data/bible/${translationSource.directory}/${book.file}.json`);
+  const response = await fetchBibleResource(`${baseUrl}data/bible/${translationSource.directory}/${book.file}.json`);
   if (!response.ok) throw new Error(`Failed to load ${translationId} ${book.name}`);
   data = await response.json();
   if (data.translation?.id !== translationSource.sourceId || data.book?.id !== book.id) {
@@ -132,6 +149,13 @@ export async function searchBibleVerses(translationId, query, limit = 30) {
   }
 
   return results;
+}
+
+export async function getBibleVerseCount(translationId = 'KRV') {
+  const books = await Promise.all(bibleCatalog.map((book) => loadBibleBook(translationId, book)));
+  return books.reduce((total, book) => (
+    total + book.chapters.reduce((bookTotal, chapter) => bookTotal + chapter.verses.length, 0)
+  ), 0);
 }
 
 export async function preloadBible(

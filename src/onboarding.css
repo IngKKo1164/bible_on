@@ -214,6 +214,28 @@ body.onboarding-body #root {
   justify-content: space-between;
 }
 
+.existing-account-button,
+.password-reset-button {
+  background: transparent;
+  border: 0;
+  color: #6b7480;
+  font-size: 12px;
+  margin-top: 13px;
+  padding: 7px;
+  text-align: center;
+}
+
+.existing-account-button strong,
+.password-reset-button {
+  color: #4b4298;
+  font-weight: 780;
+}
+
+.password-reset-button {
+  align-self: flex-end;
+  margin: 8px 0 12px;
+}
+
 .onboarding-primary-button:hover,
 .onboarding-primary-button:active {
   background: #37306f;
@@ -340,6 +362,17 @@ body.onboarding-body #root {
   color: #c14848;
   font-size: 11px;
   margin: 3px 0 10px;
+}
+
+.form-notice {
+  background: #f1f0f8;
+  border-radius: 4px;
+  color: #4b4298;
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 14px 0 0;
+  padding: 11px 13px;
+  word-break: keep-all;
 }
 
 .email-signup-view > .onboarding-primary-button {
@@ -497,8 +530,8 @@ body.onboarding-body #root {
   color: #191f28;
   display: grid;
   gap: 8px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  min-height: 54px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  min-height: 68px;
   padding: 8px 12px;
   text-align: left;
   width: 100%;
@@ -532,6 +565,36 @@ body.onboarding-body #root {
   white-space: nowrap;
 }
 
+.church-suggestions em,
+.selected-church em {
+  color: #6258a5;
+  display: block;
+  font-size: 9px;
+  font-style: normal;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onboarding-church-avatar {
+  align-items: center;
+  background: #f2eff9;
+  border-radius: 4px;
+  color: #564ca1;
+  display: inline-flex;
+  height: 36px;
+  justify-content: center;
+  overflow: hidden;
+  width: 36px;
+}
+
+.onboarding-church-avatar.has-image img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
 .church-suggestions svg {
   color: #a7afba;
 }
@@ -544,8 +607,8 @@ body.onboarding-body #root {
   color: #4b4298;
   display: grid;
   gap: 9px;
-  grid-template-columns: 20px minmax(0, 1fr);
-  min-height: 52px;
+  grid-template-columns: 36px minmax(0, 1fr);
+  min-height: 64px;
   padding: 8px 12px;
 }
 

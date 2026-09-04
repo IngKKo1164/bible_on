@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -7,11 +7,27 @@ import {
   EyeOff,
   Search,
 } from 'lucide-react';
-import { BibleOnLogo } from './brandIcons';
+import { BibleOnLogo, ChurchCrossIcon as Church } from './brandIcons';
 import { FaApple } from 'react-icons/fa';
 import { FcGoogle } from 'react-icons/fc';
 import { SiKakao, SiNaver } from 'react-icons/si';
-import { registeredChurches } from './churchData';
+import {
+  CHURCH_PROFILES_STORAGE_KEY,
+  CURRENT_CHURCH_STORAGE_KEY,
+  getRegisteredChurches,
+  searchRegisteredChurches,
+} from './churchData';
+import {
+  getCurrentSession,
+  onAuthStateChange,
+  sendPasswordReset,
+  signInWithEmail,
+  signInWithSocialProvider,
+  signUpWithEmail,
+} from './data/repositories/authRepository';
+import { readStoredValue, writeStoredValue } from './data/repositories/persistenceRepository';
+import { accountRepository } from './data/repositories/accountRepository';
+import { churchRepository } from './data/repositories/churchRepository';
 import './onboarding.css';
 
 const providers = [
@@ -39,9 +55,13 @@ function OnboardingApp() {
   const [tutorialStep, setTutorialStep] = useState(0);
   const [authMethod, setAuthMethod] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [authPending, setAuthPending] = useState(false);
+  const [authNotice, setAuthNotice] = useState('');
+  const [authUser, setAuthUser] = useState(null);
   const [formError, setFormError] = useState('');
   const [unregisteredChurchName, setUnregisteredChurchName] = useState('');
   const [form, setForm] = useState({ name: '', email: '', password: '', agreed: false });
+  const [churchProfiles] = useState(() => readStoredValue(CHURCH_PROFILES_STORAGE_KEY, {}));
   const [profile, setProfile] = useState({
     churchStatus: '',
     churchId: '',
@@ -51,13 +71,68 @@ function OnboardingApp() {
   });
 
   const progress = useMemo(() => ((tutorialStep + 1) / 3) * 100, [tutorialStep]);
-  const churchSuggestions = useMemo(() => {
-    const query = profile.churchName.trim().replace(/\s+/g, '').toLowerCase();
-    if (!query || profile.churchId) return [];
-    return registeredChurches
-      .filter((church) => church.createdByAdmin && church.name.replace(/\s+/g, '').toLowerCase().includes(query))
-      .slice(0, 4);
-  }, [profile.churchId, profile.churchName]);
+  const [churchSuggestions, setChurchSuggestions] = useState([]);
+
+  useEffect(() => {
+    const query = profile.churchName.trim();
+    if (!query || profile.churchId) {
+      setChurchSuggestions([]);
+      return undefined;
+    }
+    let active = true;
+    const timerId = window.setTimeout(() => {
+      const lookup = authUser && churchRepository.configured
+        ? churchRepository.search(query)
+        : Promise.resolve(searchRegisteredChurches(query, churchProfiles).slice(0, 4));
+      lookup.then((results) => {
+        if (active) setChurchSuggestions(results.slice(0, 4));
+      }).catch(() => {
+        if (active) setChurchSuggestions([]);
+      });
+    }, 220);
+    return () => { active = false; window.clearTimeout(timerId); };
+  }, [authUser, churchProfiles, profile.churchId, profile.churchName]);
+
+  useEffect(() => {
+    if (!accountRepository.configured) return undefined;
+    let active = true;
+
+    const acceptSession = async (session) => {
+      if (!active || !session?.user) return;
+      const user = session.user;
+      const displayName = user.user_metadata?.display_name
+        || user.user_metadata?.full_name
+        || user.user_metadata?.name
+        || '';
+      setAuthUser(user);
+      setAuthMethod(user.app_metadata?.provider ?? 'email');
+      setForm((current) => ({
+        ...current,
+        name: current.name || displayName,
+        email: current.email || user.email || '',
+      }));
+      try {
+        const account = await accountRepository.loadCurrentAccount();
+        if (account?.preferences?.onboarding?.completedAt) {
+          window.location.replace('/');
+          return;
+        }
+      } catch {
+        // The tutorial can still continue from the local account cache.
+      }
+      setTutorialStep(0);
+      setScreen('tutorial');
+    };
+
+    getCurrentSession().then(acceptSession).catch(() => {
+      if (active) setFormError('로그인 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.');
+    });
+    const unsubscribe = onAuthStateChange((_event, session) => acceptSession(session));
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   const beginTutorial = (method) => {
     setAuthMethod(method);
@@ -65,7 +140,21 @@ function OnboardingApp() {
     setScreen('tutorial');
   };
 
-  const submitEmailSignup = (event) => {
+  const beginSocialSignup = async (provider) => {
+    setFormError('');
+    setAuthNotice('');
+    setAuthPending(true);
+    try {
+      const result = await signInWithSocialProvider(provider);
+      if (result.mode === 'preview') beginTutorial(provider);
+    } catch (error) {
+      setFormError(error?.message || '소셜 로그인을 시작하지 못했어요.');
+    } finally {
+      setAuthPending(false);
+    }
+  };
+
+  const submitEmailSignup = async (event) => {
     event.preventDefault();
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (form.name.trim().length < 2) {
@@ -85,11 +174,72 @@ function OnboardingApp() {
       return;
     }
     setFormError('');
-    beginTutorial('email');
+    setAuthNotice('');
+    setAuthPending(true);
+    try {
+      const result = await signUpWithEmail({
+        email: form.email.trim(),
+        password: form.password,
+        displayName: form.name.trim(),
+      });
+      if (result.mode === 'preview') {
+        beginTutorial('email');
+      } else if (result.session) {
+        setAuthUser(result.user);
+        beginTutorial('email');
+      } else {
+        setAuthNotice('확인 메일을 보냈어요. 이메일 인증 후 이 화면으로 돌아와 주세요.');
+      }
+    } catch (error) {
+      setFormError(error?.message || '회원가입을 완료하지 못했어요.');
+    } finally {
+      setAuthPending(false);
+    }
+  };
+
+  const submitEmailSignin = async (event) => {
+    event.preventDefault();
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(form.email) || !form.password) {
+      setFormError('이메일과 비밀번호를 확인해 주세요.');
+      return;
+    }
+    setFormError('');
+    setAuthNotice('');
+    setAuthPending(true);
+    try {
+      const result = await signInWithEmail({
+        email: form.email.trim(),
+        password: form.password,
+      });
+      if (result.mode === 'preview') beginTutorial('email');
+      else window.location.replace('/');
+    } catch (error) {
+      setFormError(error?.message || '로그인하지 못했어요.');
+    } finally {
+      setAuthPending(false);
+    }
+  };
+
+  const requestPasswordReset = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+      setFormError('먼저 가입한 이메일 주소를 입력해 주세요.');
+      return;
+    }
+    setAuthPending(true);
+    setFormError('');
+    try {
+      await sendPasswordReset(form.email.trim());
+      setAuthNotice('비밀번호 재설정 메일을 보냈어요.');
+    } catch (error) {
+      setFormError(error?.message || '재설정 메일을 보내지 못했어요.');
+    } finally {
+      setAuthPending(false);
+    }
   };
 
   const goBack = () => {
-    if (screen === 'email') {
+    if (screen === 'email' || screen === 'signin') {
       setFormError('');
       setScreen('signup');
       return;
@@ -130,12 +280,15 @@ function OnboardingApp() {
     }));
   };
 
-  const searchChurch = (event) => {
+  const searchChurch = async (event) => {
     event.preventDefault();
     const query = profile.churchName.trim().replace(/\s+/g, '').toLowerCase();
     if (!query) return;
-    const exactChurch = registeredChurches.find(
-      (church) => church.createdByAdmin && church.name.replace(/\s+/g, '').toLowerCase() === query
+    const availableChurches = authUser && churchRepository.configured
+      ? await churchRepository.search(query).catch(() => [])
+      : getRegisteredChurches(churchProfiles);
+    const exactChurch = availableChurches.find(
+      (church) => church.name.replace(/\s+/g, '').toLowerCase() === query
     );
     if (exactChurch) {
       selectRegisteredChurch(exactChurch);
@@ -152,10 +305,45 @@ function OnboardingApp() {
       ? profile.interests.length > 0
       : Boolean(profile.pace);
 
-  const advanceTutorial = () => {
+  const advanceTutorial = async () => {
     if (!canContinue) return;
     if (tutorialStep < 2) setTutorialStep((current) => current + 1);
-    else setScreen('complete');
+    else {
+      setAuthPending(true);
+      setFormError('');
+      const displayName = form.name.trim()
+        || authUser?.user_metadata?.display_name
+        || authUser?.user_metadata?.full_name
+        || '바이블온 사용자';
+      writeStoredValue(CURRENT_CHURCH_STORAGE_KEY, '');
+      const savedProfile = readStoredValue('bibleon.personalProfile', {});
+      writeStoredValue('bibleon.personalProfile', { ...savedProfile, name: displayName });
+
+      try {
+        await accountRepository.saveOnboarding({
+          displayName,
+          profile: { ...savedProfile, name: displayName },
+          onboarding: {
+            churchStatus: profile.churchStatus,
+            churchId: profile.churchStatus === 'member' ? profile.churchId : '',
+            churchName: profile.churchStatus === 'member' ? profile.churchName : '',
+            interests: profile.interests,
+            pace: profile.pace,
+            authMethod,
+            completedAt: new Date().toISOString(),
+          },
+        });
+        if (authUser && profile.churchStatus === 'member' && profile.churchId) {
+          const membershipStatus = await churchRepository.requestMembership(profile.churchId);
+          if (membershipStatus === 'active') writeStoredValue(CURRENT_CHURCH_STORAGE_KEY, profile.churchId);
+        }
+        setScreen('complete');
+      } catch {
+        setFormError('설정은 기기에 저장했지만 계정 동기화에 실패했어요. 다시 시도해 주세요.');
+      } finally {
+        setAuthPending(false);
+      }
+    }
   };
 
   const resetPreview = () => {
@@ -168,7 +356,7 @@ function OnboardingApp() {
     <main className="onboarding-root">
       <section className="onboarding-shell" aria-label="바이블온 회원가입 및 튜토리얼">
         <header className="onboarding-header">
-          {screen === 'email' || screen === 'tutorial' ? (
+          {screen === 'email' || screen === 'signin' || screen === 'tutorial' ? (
             <button className="onboarding-icon-button" type="button" aria-label="이전" onClick={goBack}>
               <ArrowLeft size={21} aria-hidden="true" />
             </button>
@@ -187,17 +375,27 @@ function OnboardingApp() {
 
             <div className="social-login-list" aria-label="소셜 계정으로 가입">
               {providers.map(({ id, label, Icon }) => (
-                <button className={`social-login-button ${id}`} type="button" key={id} onClick={() => beginTutorial(id)}>
+                <button className={`social-login-button ${id}`} type="button" key={id} disabled={authPending} onClick={() => beginSocialSignup(id)}>
                   <Icon size={20} aria-hidden="true" />
                   <span>{label}로 계속하기</span>
                 </button>
               ))}
             </div>
 
+            {formError && <p className="form-error" role="alert">{formError}</p>}
+
             <div className="signup-divider"><span>또는</span></div>
 
             <button className="email-signup-button" type="button" onClick={() => setScreen('email')}>
               이메일로 직접 가입하기<ChevronRight size={18} aria-hidden="true" />
+            </button>
+
+            <button className="existing-account-button" type="button" onClick={() => {
+              setFormError('');
+              setAuthNotice('');
+              setScreen('signin');
+            }}>
+              이미 계정이 있나요? <strong>로그인</strong>
             </button>
 
             <p className="auth-legal">계속하면 바이블온 이용약관과 개인정보 처리방침에 동의하게 됩니다.</p>
@@ -260,7 +458,59 @@ function OnboardingApp() {
 
             {formError && <p className="form-error" role="alert">{formError}</p>}
 
-            <button className="onboarding-primary-button" type="submit">가입하고 계속하기</button>
+            {authNotice && <p className="form-notice" role="status">{authNotice}</p>}
+
+            <button className="onboarding-primary-button" type="submit" disabled={authPending}>
+              {authPending ? '계정을 준비하고 있어요' : '가입하고 계속하기'}
+            </button>
+          </form>
+        )}
+
+        {screen === 'signin' && (
+          <form className="email-signup-view" onSubmit={submitEmailSignin} noValidate>
+            <div className="flow-heading">
+              <span>계정 로그인</span>
+              <h1>다시 만나서 반가워요</h1>
+            </div>
+
+            <div className="signup-fields">
+              <label className="signup-field">
+                <span>이메일</span>
+                <input
+                  autoComplete="email"
+                  inputMode="email"
+                  type="email"
+                  value={form.email}
+                  onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
+                  placeholder="name@example.com"
+                />
+              </label>
+              <label className="signup-field">
+                <span>비밀번호</span>
+                <div className="password-input">
+                  <input
+                    autoComplete="current-password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={form.password}
+                    onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
+                    placeholder="비밀번호"
+                  />
+                  <button type="button" aria-label={showPassword ? '비밀번호 숨기기' : '비밀번호 보기'} onClick={() => setShowPassword((current) => !current)}>
+                    {showPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+                  </button>
+                </div>
+              </label>
+            </div>
+
+            {formError && <p className="form-error" role="alert">{formError}</p>}
+            {authNotice && <p className="form-notice" role="status">{authNotice}</p>}
+
+            <button className="password-reset-button" type="button" disabled={authPending} onClick={requestPasswordReset}>
+              비밀번호를 잊었어요
+            </button>
+            <button className="onboarding-primary-button" type="submit" disabled={authPending}>
+              {authPending ? '로그인 중...' : '로그인'}
+            </button>
           </form>
         )}
 
@@ -314,7 +564,8 @@ function OnboardingApp() {
                         <span>등록된 교회</span>
                         {churchSuggestions.map((church) => (
                           <button type="button" role="option" aria-selected="false" key={church.id} onClick={() => selectRegisteredChurch(church)}>
-                            <span><strong>{church.name}</strong><small>{church.location} · {church.denomination}</small></span>
+                            <i className={`onboarding-church-avatar ${church.profileImage ? 'has-image' : ''}`}>{church.profileImage ? <img src={church.profileImage} alt="" /> : <Church size={18} />}</i>
+                            <span><strong>{church.name}</strong><small>{church.location} · {church.denomination}</small><em>{church.verseRef} · {church.representativeVerse}</em></span>
                             <ChevronRight size={17} aria-hidden="true" />
                           </button>
                         ))}
@@ -323,8 +574,10 @@ function OnboardingApp() {
 
                     {profile.churchId && (
                       <div className="selected-church" role="status">
-                        <Check size={16} aria-hidden="true" />
-                        <span><strong>{profile.churchName}</strong><small>등록된 교회와 연결합니다</small></span>
+                        {(() => {
+                          const selectedChurch = getRegisteredChurches(churchProfiles).find(({ id }) => id === profile.churchId);
+                          return <><i className={`onboarding-church-avatar ${selectedChurch?.profileImage ? 'has-image' : ''}`}>{selectedChurch?.profileImage ? <img src={selectedChurch.profileImage} alt="" /> : <Check size={16} aria-hidden="true" />}</i><span><strong>{profile.churchName}</strong><small>{selectedChurch?.verseRef ?? '등록된 교회와 연결합니다'}</small><em>{selectedChurch?.representativeVerse}</em></span></>;
+                        })()}
                       </div>
                     )}
                   </form>
@@ -382,8 +635,9 @@ function OnboardingApp() {
             )}
 
             <div className="tutorial-actions">
-              <button className="onboarding-primary-button" type="button" disabled={!canContinue} onClick={advanceTutorial}>
-                {tutorialStep === 2 ? '설정 완료하기' : '다음'}
+              {formError && <p className="form-error" role="alert">{formError}</p>}
+              <button className="onboarding-primary-button" type="button" disabled={!canContinue || authPending} onClick={advanceTutorial}>
+                {authPending ? '계정에 저장하고 있어요' : tutorialStep === 2 ? '설정 완료하기' : '다음'}
               </button>
             </div>
           </div>
