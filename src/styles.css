@@ -688,7 +688,7 @@ button[class*="backdrop"]:active,
 }
 
 .global-settings-layer {
-  bottom: 0;
+  bottom: 80px;
   left: 50%;
   max-width: 480px;
   min-width: 320px;
@@ -716,7 +716,7 @@ button[class*="backdrop"]:active,
   display: flex;
   flex-direction: column;
   max-width: 400px;
-  overflow-y: auto;
+  overflow: hidden;
   position: absolute;
   right: 0;
   top: 0;
@@ -728,23 +728,28 @@ button[class*="backdrop"]:active,
   to { transform: translateX(0); }
 }
 
-.global-settings-drawer > header {
+.settings-view > header {
   align-items: center;
+  background: var(--surface);
   border-bottom: 1px solid var(--divider);
-  display: flex;
+  display: grid;
   flex: 0 0 auto;
-  justify-content: space-between;
+  grid-template-columns: 38px minmax(0, 1fr) 38px;
   min-height: 64px;
   padding: max(8px, env(safe-area-inset-top)) 16px 8px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
-.global-settings-drawer > header h2 {
+.settings-view > header h2 {
   font-size: 20px;
   font-weight: 840;
   margin: 0;
+  text-align: center;
 }
 
-.global-settings-drawer > header button {
+.settings-view > header button {
   align-items: center;
   background: transparent;
   border: 0;
@@ -757,16 +762,29 @@ button[class*="backdrop"]:active,
 
 .settings-profile {
   align-items: center;
+  background: transparent;
+  border: 0;
   border-bottom: 8px solid var(--app-bg);
+  color: var(--ink);
   display: grid;
   gap: 11px;
   grid-template-columns: 46px minmax(0, 1fr) auto;
   padding: 18px 16px;
+  text-align: left;
+  width: 100%;
 }
 
 .settings-profile .member-avatar {
   height: 46px;
+  overflow: hidden;
   width: 46px;
+}
+
+.settings-profile .member-avatar img,
+.settings-account-summary .member-avatar img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
 }
 
 .settings-profile > div {
@@ -946,6 +964,179 @@ button[class*="backdrop"]:active,
 
 .settings-link-list > button > svg {
   color: var(--muted-light);
+}
+
+.settings-detail-view {
+  background: var(--app-bg);
+}
+
+.settings-detail-content {
+  display: grid;
+  gap: 10px;
+  padding: 14px 12px 28px;
+}
+
+.settings-account-summary,
+.settings-detail-group,
+.settings-privacy-policy > header,
+.settings-privacy-policy > section {
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+}
+
+.settings-account-summary {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 46px minmax(0, 1fr);
+  padding: 15px;
+}
+
+.settings-account-summary .member-avatar {
+  height: 46px;
+  overflow: hidden;
+  width: 46px;
+}
+
+.settings-account-summary > div,
+.settings-identity-row > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-account-summary strong,
+.settings-identity-row strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.settings-account-summary small,
+.settings-identity-row small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.settings-detail-group {
+  overflow: hidden;
+}
+
+.settings-detail-group > h3 {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 0;
+  padding: 14px 14px 10px;
+}
+
+.settings-uid-row {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--divider);
+  color: var(--ink);
+  display: flex;
+  justify-content: space-between;
+  min-height: 64px;
+  padding: 10px 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.settings-uid-row > span:first-child {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.settings-uid-row code {
+  color: var(--muted);
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.settings-uid-row > span:last-child {
+  color: var(--accent-deep);
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 760;
+  margin-left: 10px;
+}
+
+.settings-identity-row {
+  align-items: center;
+  border-top: 1px solid var(--divider);
+  display: flex;
+  justify-content: space-between;
+  min-height: 56px;
+  padding: 8px 14px;
+}
+
+.settings-identity-row > b,
+.settings-identity-row > button {
+  background: var(--surface-muted);
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 760;
+  min-width: 48px;
+  padding: 7px 10px;
+  text-align: center;
+}
+
+.settings-identity-row > b.is-linked {
+  background: var(--accent-pale);
+  color: var(--accent-deep);
+}
+
+.settings-identity-row > button {
+  background: var(--accent-deep);
+  color: #fff;
+}
+
+.settings-identity-row > button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.settings-account-message {
+  color: #d04d4d;
+  font-size: 11px;
+  margin: 0;
+  padding: 2px 4px;
+}
+
+.settings-privacy-policy > header,
+.settings-privacy-policy > section {
+  padding: 15px;
+}
+
+.settings-privacy-policy > header {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-privacy-policy > header strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.settings-privacy-policy > header small,
+.settings-privacy-policy p {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-privacy-policy h3 {
+  color: var(--ink-soft);
+  font-size: 12px;
+  margin: 0 0 7px;
+}
+
+.settings-privacy-policy p {
+  line-height: 1.65;
+  margin: 0;
 }
 
 .bottom-nav {
@@ -2418,7 +2609,7 @@ button.list-row:active,
 .picker-wheel {
   height: 250px;
   -webkit-overflow-scrolling: touch;
-  overflow-y: auto;
+  overflow: hidden;
   overscroll-behavior-y: contain;
   padding: 100px 0;
   position: relative;
@@ -7246,6 +7437,43 @@ button.list-row:active,
   width: 38px;
 }
 
+.settings-header-spacer {
+  display: block;
+  height: 38px;
+  width: 38px;
+}
+
+.settings-view-rail {
+  display: flex;
+  height: 100%;
+  transform: translateX(0);
+  transition: transform 280ms cubic-bezier(0.22, 0.72, 0.2, 1);
+  width: 200%;
+  will-change: transform;
+}
+
+.settings-view-rail.is-detail {
+  transform: translateX(-50%);
+}
+
+.settings-view {
+  flex: 0 0 50%;
+  height: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.settings-view::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-view[aria-hidden='true'] {
+  pointer-events: none;
+}
+
 .qt-source-switch {
   background: var(--surface-muted);
   display: grid;
@@ -8263,7 +8491,10 @@ button.list-row:active,
 }
 
 /* Message actions, theme controls, and church administration */
-.workspace:has(.global-settings-layer),
+.workspace:has(.global-settings-layer) {
+  overflow: visible;
+}
+
 .workspace:has(.church-admin-screen),
 .workspace:has(.church-registration-layer),
 .workspace:has(.confirm-dialog-layer) {
@@ -8272,11 +8503,11 @@ button.list-row:active,
 }
 
 .global-settings-layer {
-  bottom: -80px;
+  bottom: 80px;
 }
 
 .global-settings-drawer {
-  padding-bottom: max(80px, env(safe-area-inset-bottom));
+  padding-bottom: 0;
 }
 
 .settings-theme-branch.is-above {

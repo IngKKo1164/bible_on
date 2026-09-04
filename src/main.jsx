@@ -9,8 +9,6 @@ import {
   Check,
   Circle,
   Clock3,
-  Cloud,
-  CloudOff,
   Cog,
   Copy,
   ChevronDown,
@@ -72,7 +70,7 @@ import {
 import OnboardingApp from './OnboardingApp';
 import { readStoredValue, removeStoredValue, writeStoredValue } from './data/repositories/persistenceRepository';
 import { accountRepository } from './data/repositories/accountRepository';
-import { getCurrentSession, signOutCurrentAccount } from './data/repositories/authRepository';
+import { getCurrentSession, linkSocialIdentity, signOutCurrentAccount } from './data/repositories/authRepository';
 import { personalDataRepository } from './data/repositories/personalDataRepository';
 import { churchRepository } from './data/repositories/churchRepository';
 import { friendRepository } from './data/repositories/friendRepository';
@@ -90,8 +88,7 @@ import {
   uploadChurchMedia,
   uploadMessageAttachment,
 } from './data/repositories/mediaRepository';
-import { getActivePersistenceUser, initializePersistenceScope } from './data/persistence/persistenceContext';
-import { getOutboxSummary, subscribeOutbox } from './data/persistence/outbox';
+import { initializePersistenceScope } from './data/persistence/persistenceContext';
 import './styles.css';
 
 const readingHighlights = {
@@ -1136,7 +1133,6 @@ function App() {
   const [currentAccountUser, setCurrentAccountUser] = useState(null);
   const [messageMembers, setMessageMembers] = useState(knownMessageMembers);
   const [serverChurchWorkspace, setServerChurchWorkspace] = useState(null);
-  const [syncSummary, setSyncSummary] = useState({ total: 0, pending: 0, syncing: 0, failed: 0 });
 
   const selectedBook = bibleBooks.find((book) => book.id === selectedBookId) ?? bibleBooks[0];
   const currentChurch = useMemo(() => (
@@ -1156,24 +1152,6 @@ function App() {
     [readingProgress, readingProgressHistory]
   );
   useHeavyOverscroll(appShellRef);
-
-  useEffect(() => {
-    const userId = getActivePersistenceUser();
-    let active = true;
-    const refresh = () => {
-      getOutboxSummary(userId).then((summary) => {
-        if (active) setSyncSummary(summary);
-      }).catch(() => {
-        if (active) setSyncSummary((current) => ({ ...current, failed: Math.max(1, current.failed) }));
-      });
-    };
-    refresh();
-    const unsubscribe = subscribeOutbox(refresh);
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
 
   useEffect(() => {
     if (!accountRepository.configured) return undefined;
@@ -1935,10 +1913,10 @@ function App() {
           darkModeEnd={darkModeEnd}
           setDarkModeEnd={setDarkModeEnd}
           onOpenNotification={openNotificationDestination}
-          syncSummary={syncSummary}
           signedIn={Boolean(currentAccountUser)}
           accountUser={currentAccountUser}
           personalProfile={personalProfile}
+          onOpenProfile={() => selectTab('profile')}
           onSignOut={async () => {
             await signOutCurrentAccount();
             window.location.assign('/onboarding');
@@ -2104,14 +2082,17 @@ function Topbar({
   darkModeEnd,
   setDarkModeEnd,
   onOpenNotification,
-  syncSummary,
   signedIn,
   accountUser,
   personalProfile,
+  onOpenProfile,
   onSignOut,
 }) {
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsPage, setSettingsPage] = useState('root');
+  const [accountActionMessage, setAccountActionMessage] = useState('');
+  const [uidCopied, setUidCopied] = useState(false);
   const [notifications, setNotifications] = useState(initialRecentNotifications);
   const [messageAlerts, setMessageAlerts] = useState(true);
   const [churchAlerts, setChurchAlerts] = useState(true);
@@ -2127,8 +2108,53 @@ function Topbar({
 
   const openSettings = () => {
     setNotificationOpen(false);
+    setSettingsPage('root');
+    setAccountActionMessage('');
     setSettingsOpen(true);
   };
+
+  const closeSettings = () => dismissSettings(() => {
+    setSettingsPage('root');
+    setAccountActionMessage('');
+  });
+
+  const openProfileFromSettings = () => {
+    dismissSettings(() => {
+      setSettingsPage('root');
+      onOpenProfile();
+    });
+  };
+
+  const copyAccountUid = async () => {
+    if (!accountUser?.id) return;
+    try {
+      await navigator.clipboard.writeText(accountUser.id);
+      setUidCopied(true);
+      window.setTimeout(() => setUidCopied(false), 1400);
+    } catch {
+      setAccountActionMessage('UID를 복사하지 못했어요.');
+    }
+  };
+
+  const connectIdentity = async (provider) => {
+    setAccountActionMessage('');
+    try {
+      await linkSocialIdentity(provider);
+    } catch (error) {
+      setAccountActionMessage(error?.message || '계정 연동을 시작하지 못했어요.');
+    }
+  };
+
+  const connectedProviders = new Set(
+    (accountUser?.identities ?? []).map((identity) => identity.provider)
+  );
+  const accountProviders = [
+    { id: 'email', label: '이메일' },
+    { id: 'google', label: 'Google' },
+    { id: 'kakao', label: 'Kakao' },
+    { id: 'apple', label: 'Apple' },
+    { id: 'naver', label: 'Naver' },
+  ];
 
   const openNotification = (notification) => {
     markNotificationRead(notification.id);
@@ -2221,20 +2247,25 @@ function Topbar({
 
       {settingsOpen && (
         <div className={`global-settings-layer ${settingsClosing ? 'is-closing' : ''}`}>
-          <button className="global-settings-backdrop" type="button" aria-label="설정 닫기" onClick={() => dismissSettings()} />
+          <button className="global-settings-backdrop" type="button" aria-label="설정 닫기" onClick={closeSettings} />
           <aside className="global-settings-drawer" aria-label="설정">
-            <header>
-              <h2>설정</h2>
-              <button type="button" aria-label="설정 닫기" onClick={() => dismissSettings()}><X size={22} aria-hidden="true" /></button>
-            </header>
+            <div className={`settings-view-rail ${settingsPage === 'root' ? '' : 'is-detail'}`}>
+              <div className="settings-view settings-root-view" aria-hidden={settingsPage !== 'root'} inert={settingsPage !== 'root'}>
+                <header>
+                  <span className="settings-header-spacer" aria-hidden="true" />
+                  <h2>설정</h2>
+                  <button type="button" aria-label="설정 닫기" onClick={closeSettings}><X size={22} aria-hidden="true" /></button>
+                </header>
 
-            <section className="settings-profile">
-              <span className="member-avatar" aria-hidden="true"><UserRound className="default-profile-glyph" /></span>
-              <div><strong>{personalProfile?.name || accountUser?.email || '게스트'}</strong><small>{signedIn ? accountUser?.email : '이 기기에만 저장 중'}</small></div>
-              <ChevronRight size={19} aria-hidden="true" />
-            </section>
+                <button className="settings-profile" type="button" onClick={openProfileFromSettings}>
+                  <span className={`member-avatar ${personalProfile?.avatarImage ? 'has-image' : ''}`} aria-hidden="true">
+                    {personalProfile?.avatarImage ? <img src={personalProfile.avatarImage} alt="" /> : <UserRound className="default-profile-glyph" />}
+                  </span>
+                  <div><strong>{personalProfile?.name || accountUser?.email || '게스트'}</strong>{signedIn && <small>{accountUser?.email}</small>}</div>
+                  <ChevronRight size={19} aria-hidden="true" />
+                </button>
 
-            <section className="settings-group">
+                <section className="settings-group">
               <h3>성경 읽기</h3>
               <div className="settings-option-row">
                 <span><BookOpen size={20} aria-hidden="true" /><strong>기본 번역</strong></span>
@@ -2252,9 +2283,9 @@ function Topbar({
                   ))}
                 </div>
               </div>
-            </section>
+                </section>
 
-            <section className="settings-group">
+                <section className="settings-group">
               <h3>화면</h3>
               <div className="settings-theme-branch is-above">
                 <div className="settings-theme-choices" role="group" aria-label="다크 모드 작동 방식">
@@ -2280,9 +2311,9 @@ function Topbar({
                 <span><Moon size={20} aria-hidden="true" /><span><strong>다크 모드</strong><small>{themeControlMode === 'always' ? (alwaysDarkEnabled ? '항상 사용 중' : '라이트 모드 사용 중') : themeControlMode === 'system' ? '시스템 설정으로 자동 적용' : `${darkModeStart}부터 ${darkModeEnd}까지 자동 적용`}</small></span></span>
                 <i className={darkModeToggleChecked ? 'is-on' : ''}><b /></i>
               </button>
-            </section>
+                </section>
 
-            <section className="settings-group">
+                <section className="settings-group">
               <h3>알림</h3>
               <button
                 className="settings-toggle-row"
@@ -2304,39 +2335,75 @@ function Topbar({
                 <span><Church size={20} aria-hidden="true" /><span><strong>교회 알림</strong><small>공지와 예배 정보 업데이트</small></span></span>
                 <i className={churchAlerts ? 'is-on' : ''}><b /></i>
               </button>
-            </section>
+                </section>
 
-            <section className="settings-group settings-link-list">
+                <section className="settings-group settings-link-list">
               <h3>계정 및 서비스</h3>
-              <div className="settings-sync-status" role="status">
-                {syncSummary.failed > 0
-                  ? <CloudOff size={20} aria-hidden="true" />
-                  : <Cloud size={20} aria-hidden="true" />}
-                <span>
-                  <strong>{!signedIn
-                    ? '이 기기에 저장 중'
-                    : syncSummary.failed > 0
-                      ? '동기화를 확인해 주세요'
-                      : syncSummary.total > 0
-                        ? `${syncSummary.total}개 동기화 대기 중`
-                        : '동기화 완료'}</strong>
-                  <small>{!signedIn
-                    ? '로그인 전 기록은 설치별 게스트 공간에 보관돼요.'
-                    : syncSummary.failed > 0
-                      ? `${syncSummary.failed}개 작업을 다시 시도해야 해요.`
-                      : syncSummary.total > 0
-                        ? '연결되면 서버에 안전하게 반영돼요.'
-                        : '이 계정의 변경 사항이 저장됐어요.'}</small>
-                </span>
-              </div>
-              <button type="button"><span><UserRound size={20} /><strong>계정 관리</strong></span><ChevronRight size={18} /></button>
-              <button type="button"><span><ShieldCheck size={20} /><strong>개인정보 및 보안</strong></span><ChevronRight size={18} /></button>
+              <button type="button" onClick={() => setSettingsPage('account')}><span><UserRound size={20} /><strong>계정 관리</strong></span><ChevronRight size={18} /></button>
+              <button type="button" onClick={() => setSettingsPage('privacy')}><span><ShieldCheck size={20} /><strong>개인정보 및 보안</strong></span><ChevronRight size={18} /></button>
               {signedIn && (
                 <button className="settings-signout-button" type="button" onClick={onSignOut}>
                   <span><LogOut size={20} /><strong>로그아웃</strong></span><ChevronRight size={18} />
                 </button>
               )}
-            </section>
+                </section>
+              </div>
+
+              <div className="settings-view settings-detail-view" aria-hidden={settingsPage === 'root'} inert={settingsPage === 'root'}>
+                <header>
+                  <button type="button" aria-label="설정으로 돌아가기" onClick={() => { setSettingsPage('root'); setAccountActionMessage(''); }}><ChevronLeft size={22} aria-hidden="true" /></button>
+                  <h2>{settingsPage === 'privacy' ? '개인정보 및 보안' : '계정 관리'}</h2>
+                  <button type="button" aria-label="설정 닫기" onClick={closeSettings}><X size={22} aria-hidden="true" /></button>
+                </header>
+
+                {settingsPage === 'account' && (
+                  <div className="settings-detail-content">
+                    <section className="settings-account-summary">
+                      <span className={`member-avatar ${personalProfile?.avatarImage ? 'has-image' : ''}`} aria-hidden="true">
+                        {personalProfile?.avatarImage ? <img src={personalProfile.avatarImage} alt="" /> : <UserRound className="default-profile-glyph" />}
+                      </span>
+                      <div><strong>{personalProfile?.name || accountUser?.email || '게스트'}</strong><small>{accountUser?.email || '로그인하지 않음'}</small></div>
+                    </section>
+
+                    <section className="settings-detail-group">
+                      <h3>계정 식별자</h3>
+                      <button className="settings-uid-row" type="button" disabled={!accountUser?.id} onClick={copyAccountUid}>
+                        <span><strong>UID</strong><code>{accountUser?.id || '로그인 후 확인할 수 있어요'}</code></span>
+                        <span>{uidCopied ? '복사됨' : <Copy size={17} aria-hidden="true" />}</span>
+                      </button>
+                    </section>
+
+                    <section className="settings-detail-group settings-identity-list">
+                      <h3>계정 연동 관리</h3>
+                      {accountProviders.map((provider) => {
+                        const linked = connectedProviders.has(provider.id)
+                          || (provider.id === 'email' && accountUser?.email && connectedProviders.size === 0);
+                        return (
+                          <div className="settings-identity-row" key={provider.id}>
+                            <span><strong>{provider.label}</strong><small>{linked ? '연동됨' : '연동 안 됨'}</small></span>
+                            {provider.id === 'email' || linked
+                              ? <b className={linked ? 'is-linked' : ''}>{linked ? '사용 중' : '미연동'}</b>
+                              : <button type="button" disabled={!signedIn} onClick={() => connectIdentity(provider.id)}>연동</button>}
+                          </div>
+                        );
+                      })}
+                    </section>
+                    {accountActionMessage && <p className="settings-account-message" role="status">{accountActionMessage}</p>}
+                  </div>
+                )}
+
+                {settingsPage === 'privacy' && (
+                  <article className="settings-detail-content settings-privacy-policy">
+                    <header><strong>바이블온 개인정보 및 보안 정책</strong><small>현재 적용 기준 · 2026년 9월 4일</small></header>
+                    <section><h3>개인 기록</h3><p>성경 읽음, 메모, 강조, 통독, 업적과 홈 대화 기록은 로그인한 계정에 귀속됩니다. 로그인 전 기록은 해당 기기의 게스트 공간에만 보관됩니다.</p></section>
+                    <section><h3>공동체 기록</h3><p>교회 가입, 부서, 친구, 대화, QT, 공지와 예배 정보는 공동체 기능 제공을 위해 서버에 저장되며 허용된 구성원에게만 공개됩니다.</p></section>
+                    <section><h3>파일과 기기 캐시</h3><p>프로필 이미지와 메시지 첨부파일은 비공개 저장소에 보관합니다. 성경 본문은 빠른 읽기를 위해 기기에 내려받아 캐시하며 계정 간에 내용을 공유해도 개인 기록은 공유하지 않습니다.</p></section>
+                    <section><h3>접근 보호</h3><p>데이터베이스 행 단위 접근 정책과 만료되는 파일 주소를 사용합니다. 사용자는 자신의 계정 데이터에만 접근하며, 대화와 교회 데이터는 참여 여부와 권한을 서버에서 확인합니다.</p></section>
+                    <section><h3>사용자 선택권</h3><p>프로필과 개인 기록은 앱에서 수정할 수 있습니다. 로그아웃하면 서버 계정과의 연결이 종료되며 기기의 로그인 세션을 제거합니다.</p></section>
+                  </article>
+                )}
+              </div>
+            </div>
           </aside>
         </div>
       )}
@@ -4565,11 +4632,6 @@ function ChurchView({
           <div><span>나의 교회</span><h2>{currentChurch.name}</h2><p>{churchInfo.department} · 교인 {churchInfo.members}명</p></div>
         </div>
         <blockquote className="church-representative-verse"><p>{currentChurch.representativeVerse}</p><cite>{currentChurch.verseRef}</cite></blockquote>
-        <div className="summary-metrics">
-          <Metric label="새 소식" value={`${visibleAnnouncements.length}`} />
-          <Metric label="QT 나눔" value={`${posts.length}`} />
-          <Metric label="이번 주 예배" value={`${visibleScheduledWorship.length}`} />
-        </div>
       </section>
 
       <Section title="교회 소식">
@@ -5858,7 +5920,7 @@ function PopularBibleTop({ rankings, onOpenBibleVerse }) {
   return (
     <section className="popular-bible-card" aria-label="인기 성경 TOP 5">
       <header>
-        <div><strong>인기 성경 TOP 5</strong><small>오늘을 제외한 실제 읽기 집계</small></div>
+        <div><strong>인기 성경 TOP 5</strong></div>
         <div className="popular-bible-period" role="tablist" aria-label="인기 말씀 집계 기간">
           {Object.entries(rankings).map(([id, item]) => (
             <button className={period === id ? 'is-active' : ''} type="button" role="tab" aria-selected={period === id} key={id} onClick={() => setPeriod(id)}>{item.label}</button>

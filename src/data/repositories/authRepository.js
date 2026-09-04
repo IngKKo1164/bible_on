@@ -58,6 +58,22 @@ export async function signInWithSocialProvider(provider) {
   return { mode: 'supabase', ...data };
 }
 
+export async function linkSocialIdentity(provider) {
+  if (!isSupabaseConfigured) return { mode: 'preview' };
+  const configuredProvider = provider === 'naver'
+    ? import.meta.env.VITE_SUPABASE_NAVER_PROVIDER_ID?.trim()
+    : provider;
+  if (!configuredProvider) throw new Error('네이버 계정 연동 설정이 아직 완료되지 않았어요.');
+
+  const client = requireSupabase();
+  const { data, error } = await client.auth.linkIdentity({
+    provider: configuredProvider,
+    options: { redirectTo: window.location.href, skipBrowserRedirect: false },
+  });
+  if (error) throw error;
+  return { mode: 'supabase', ...data };
+}
+
 export async function getCurrentSession() {
   if (!supabase) return null;
   const { data, error } = await supabase.auth.getSession();
