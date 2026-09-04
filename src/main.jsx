@@ -1916,7 +1916,9 @@ function App() {
           signedIn={Boolean(currentAccountUser)}
           accountUser={currentAccountUser}
           personalProfile={personalProfile}
-          onOpenProfile={() => selectTab('profile')}
+          currentChurch={currentChurch}
+          churchAccess={churchAccess}
+          serverChurchWorkspace={serverChurchWorkspace}
           onSignOut={async () => {
             await signOutCurrentAccount();
             window.location.assign('/onboarding');
@@ -2085,7 +2087,9 @@ function Topbar({
   signedIn,
   accountUser,
   personalProfile,
-  onOpenProfile,
+  currentChurch,
+  churchAccess,
+  serverChurchWorkspace,
   onSignOut,
 }) {
   const [notificationOpen, setNotificationOpen] = useState(false);
@@ -2118,13 +2122,6 @@ function Topbar({
     setAccountActionMessage('');
   });
 
-  const openProfileFromSettings = () => {
-    dismissSettings(() => {
-      setSettingsPage('root');
-      onOpenProfile();
-    });
-  };
-
   const copyAccountUid = async () => {
     if (!accountUser?.id) return;
     try {
@@ -2155,6 +2152,13 @@ function Topbar({
     { id: 'apple', label: 'Apple' },
     { id: 'naver', label: 'Naver' },
   ];
+  const signedChurchMember = serverChurchWorkspace?.members?.find(({ userId }) => userId === accountUser?.id);
+  const signedDepartment = serverChurchWorkspace?.departments?.find(({ id }) => id === signedChurchMember?.departmentId);
+  const settingsChurchName = currentChurch?.name || '등록된 교회 없음';
+  const settingsNickname = personalProfile?.nickname ? `@${personalProfile.nickname}` : '닉네임 미설정';
+  const settingsDepartment = signedDepartment?.name || (currentChurch ? churchInfo.department : '소속 부서 없음');
+  const settingsRole = signedChurchMember?.title
+    || (currentChurch ? (churchAccess?.authority || churchInfo.role) : '직책 없음');
 
   const openNotification = (notification) => {
     markNotificationRead(notification.id);
@@ -2257,13 +2261,16 @@ function Topbar({
                   <button type="button" aria-label="설정 닫기" onClick={closeSettings}><X size={22} aria-hidden="true" /></button>
                 </header>
 
-                <button className="settings-profile" type="button" onClick={openProfileFromSettings}>
+                <section className="settings-profile" aria-label="내 프로필 요약">
                   <span className={`member-avatar ${personalProfile?.avatarImage ? 'has-image' : ''}`} aria-hidden="true">
                     {personalProfile?.avatarImage ? <img src={personalProfile.avatarImage} alt="" /> : <UserRound className="default-profile-glyph" />}
                   </span>
-                  <div><strong>{personalProfile?.name || accountUser?.email || '게스트'}</strong>{signedIn && <small>{accountUser?.email}</small>}</div>
-                  <ChevronRight size={19} aria-hidden="true" />
-                </button>
+                  <div>
+                    <strong>{personalProfile?.name || accountUser?.email || '게스트'}</strong>
+                    <small>{settingsChurchName} · {settingsNickname}</small>
+                    <small>{settingsDepartment} · {settingsRole}</small>
+                  </div>
+                </section>
 
                 <section className="settings-group">
               <h3>성경 읽기</h3>
