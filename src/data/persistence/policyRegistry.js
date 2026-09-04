@@ -32,6 +32,7 @@ const SHARED_KEYS = [
   'bibleon.churchJoinRequests',
   'bibleon.churchMemberRoles',
   'bibleon.churchProfilesV1',
+  'bibleon.communityIdsV1',
   'bibleon.currentChurchAccess',
   'bibleon.currentChurchId',
   'bibleon.departmentNodes',

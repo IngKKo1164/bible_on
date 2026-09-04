@@ -2,6 +2,7 @@ export const registeredChurches = [
   {
     id: 'grace-spring',
     name: '은혜샘교회',
+    communityType: 'church',
     denomination: '대한예수교장로회',
     location: '서울 마포구',
     createdByAdmin: true,
@@ -12,6 +13,7 @@ export const registeredChurches = [
   {
     id: 'new-light-central',
     name: '새빛중앙교회',
+    communityType: 'church',
     denomination: '기독교대한감리회',
     location: '서울 송파구',
     createdByAdmin: true,
@@ -22,6 +24,7 @@ export const registeredChurches = [
   {
     id: 'green-hill',
     name: '푸른언덕교회',
+    communityType: 'church',
     denomination: '대한예수교장로회',
     location: '경기 성남시',
     createdByAdmin: true,
@@ -32,6 +35,7 @@ export const registeredChurches = [
   {
     id: 'joy-community',
     name: '기쁨공동체교회',
+    communityType: 'church',
     denomination: '한국기독교장로회',
     location: '인천 연수구',
     createdByAdmin: true,
@@ -42,6 +46,7 @@ export const registeredChurches = [
   {
     id: 'one-heart',
     name: '한마음교회',
+    communityType: 'church',
     denomination: '대한예수교장로회',
     location: '대전 서구',
     createdByAdmin: true,
@@ -53,6 +58,7 @@ export const registeredChurches = [
 
 export const CURRENT_CHURCH_STORAGE_KEY = 'bibleon.currentChurchId';
 export const CHURCH_PROFILES_STORAGE_KEY = 'bibleon.churchProfilesV1';
+export const COMMUNITY_IDS_STORAGE_KEY = 'bibleon.communityIdsV1';
 
 export function getRegisteredChurches(profileOverrides = {}) {
   const builtIn = registeredChurches

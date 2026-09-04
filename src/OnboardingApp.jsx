@@ -4,13 +4,15 @@ import {
   Check,
   ChevronRight,
   Search,
+  Users,
 } from 'lucide-react';
-import { BibleOnLogo, ChurchCrossIcon as Church } from './brandIcons';
+import { BibleOnLogo } from './brandIcons';
 import { FaApple } from 'react-icons/fa';
 import { FcGoogle } from 'react-icons/fc';
 import { SiKakao, SiNaver } from 'react-icons/si';
 import {
   CHURCH_PROFILES_STORAGE_KEY,
+  COMMUNITY_IDS_STORAGE_KEY,
   CURRENT_CHURCH_STORAGE_KEY,
   getRegisteredChurches,
   searchRegisteredChurches,
@@ -33,12 +35,12 @@ const providers = [
 ];
 
 const churchChoices = [
-  { id: 'member', label: '다니는 교회가 있어요', helper: '교회를 등록하고 공동체와 연결해요' },
-  { id: 'looking', label: '교회를 찾고 있어요', helper: '개인 말씀 생활부터 시작해요' },
-  { id: 'personal', label: '개인으로 먼저 시작할게요', helper: '교회는 나중에 등록할 수 있어요' },
+  { id: 'member', label: '참여 중인 공동체가 있어요', helper: '교회, 동아리와 소모임을 연결해요' },
+  { id: 'looking', label: '공동체를 찾고 있어요', helper: '개인 말씀 생활부터 시작해요' },
+  { id: 'personal', label: '개인으로 먼저 시작할게요', helper: '공동체는 나중에 추가할 수 있어요' },
 ];
 
-const interestChoices = ['성경 읽기', 'QT와 묵상', '교회 소식', '예배 준비', '찬양 추천', '말씀 로드맵'];
+const interestChoices = ['성경 읽기', 'QT와 묵상', '공동체 소식', '예배 준비', '찬양 추천', '말씀 로드맵'];
 const paceChoices = [
   { id: '5', label: '가볍게', helper: '하루 5분' },
   { id: '10', label: '꾸준하게', helper: '하루 10분' },
@@ -235,7 +237,10 @@ function OnboardingApp() {
         });
         if (authUser && profile.churchStatus === 'member' && profile.churchId) {
           const membershipStatus = await churchRepository.requestMembership(profile.churchId);
-          if (membershipStatus === 'active') writeStoredValue(CURRENT_CHURCH_STORAGE_KEY, profile.churchId);
+          if (membershipStatus === 'active') {
+            writeStoredValue(CURRENT_CHURCH_STORAGE_KEY, profile.churchId);
+            writeStoredValue(COMMUNITY_IDS_STORAGE_KEY, [profile.churchId]);
+          }
         }
         setScreen('complete');
       } catch {
@@ -264,7 +269,7 @@ function OnboardingApp() {
             <div className="signup-heading">
               <span>새로운 말씀 생활</span>
               <h1>바이블온을 시작해요</h1>
-              <p>한 번의 가입으로 성경 읽기와 교회 공동체를 함께 이용할 수 있어요.</p>
+              <p>한 번의 가입으로 성경 읽기와 다양한 공동체를 함께 이용할 수 있어요.</p>
             </div>
 
             <div className="social-login-list" aria-label="소셜 계정으로 가입">
@@ -292,8 +297,8 @@ function OnboardingApp() {
             {tutorialStep === 0 && (
               <div className="tutorial-content">
                 <div className="flow-heading">
-                  <span>교회 연결</span>
-                  <h1>현재 교회 생활을 알려주세요</h1>
+                  <span>공동체 연결</span>
+                  <h1>함께하고 있는 공동체가 있나요?</h1>
                 </div>
                 <div className="choice-list">
                   {churchChoices.map((choice) => (
@@ -322,17 +327,17 @@ function OnboardingApp() {
                           setUnregisteredChurchName('');
                           setProfile((current) => ({ ...current, churchId: '', churchName: value }));
                         }}
-                        placeholder="등록된 교회 이름을 검색해 주세요"
+                        placeholder="등록된 공동체 이름을 검색해 주세요"
                       />
                       <button type="submit">검색</button>
                     </label>
 
                     {churchSuggestions.length > 0 && (
-                      <div className="church-suggestions" id="registered-church-suggestions" role="listbox" aria-label="등록된 교회 검색 결과">
-                        <span>등록된 교회</span>
+                      <div className="church-suggestions" id="registered-church-suggestions" role="listbox" aria-label="등록된 공동체 검색 결과">
+                        <span>등록된 공동체</span>
                         {churchSuggestions.map((church) => (
                           <button type="button" role="option" aria-selected="false" key={church.id} onClick={() => selectRegisteredChurch(church)}>
-                            <i className={`onboarding-church-avatar ${church.profileImage ? 'has-image' : ''}`}>{church.profileImage ? <img src={church.profileImage} alt="" /> : <Church size={18} />}</i>
+                            <i className={`onboarding-church-avatar ${church.profileImage ? 'has-image' : ''}`}>{church.profileImage ? <img src={church.profileImage} alt="" /> : <Users size={18} />}</i>
                             <span><strong>{church.name}</strong><small>{church.location} · {church.denomination}</small><em>{church.verseRef} · {church.representativeVerse}</em></span>
                             <ChevronRight size={17} aria-hidden="true" />
                           </button>
@@ -344,7 +349,7 @@ function OnboardingApp() {
                       <div className="selected-church" role="status">
                         {(() => {
                           const selectedChurch = getRegisteredChurches(churchProfiles).find(({ id }) => id === profile.churchId);
-                          return <><i className={`onboarding-church-avatar ${selectedChurch?.profileImage ? 'has-image' : ''}`}>{selectedChurch?.profileImage ? <img src={selectedChurch.profileImage} alt="" /> : <Check size={16} aria-hidden="true" />}</i><span><strong>{profile.churchName}</strong><small>{selectedChurch?.verseRef ?? '등록된 교회와 연결합니다'}</small><em>{selectedChurch?.representativeVerse}</em></span></>;
+                          return <><i className={`onboarding-church-avatar ${selectedChurch?.profileImage ? 'has-image' : ''}`}>{selectedChurch?.profileImage ? <img src={selectedChurch.profileImage} alt="" /> : <Check size={16} aria-hidden="true" />}</i><span><strong>{profile.churchName}</strong><small>{selectedChurch?.verseRef ?? '등록된 공동체와 연결합니다'}</small><em>{selectedChurch?.representativeVerse}</em></span></>;
                         })()}
                       </div>
                     )}
@@ -352,8 +357,8 @@ function OnboardingApp() {
                 )}
                 {unregisteredChurchName && (
                   <div className="unregistered-church-notice" role="status">
-                    <strong>‘{unregisteredChurchName}’ 검색 결과는 아직 등록된 교회에 없어요.</strong>
-                    <p>교회 관리자에게 바이블온에서 교회를 등록하면 함께 사용할 수 있다고 알려주세요. 지금은 개인으로 먼저 시작합니다.</p>
+                    <strong>‘{unregisteredChurchName}’ 공동체를 찾지 못했어요.</strong>
+                    <p>공동체를 새로 만들거나 만든 사람에게 정확한 이름을 확인해 주세요. 지금은 개인으로 먼저 시작합니다.</p>
                   </div>
                 )}
               </div>
@@ -420,7 +425,7 @@ function OnboardingApp() {
               <p>{providers.find((provider) => provider.id === authMethod)?.label ?? '연동'} 계정과 개인 설정이 준비되었습니다.</p>
             </div>
             <dl className="onboarding-summary">
-              <div><dt>교회</dt><dd>{profile.churchStatus === 'member' ? profile.churchName : '개인으로 시작'}</dd></div>
+              <div><dt>공동체</dt><dd>{profile.churchStatus === 'member' ? profile.churchName : '개인으로 시작'}</dd></div>
               <div><dt>관심 기능</dt><dd>{profile.interests.slice(0, 2).join(', ')}</dd></div>
               <div><dt>읽기 목표</dt><dd>하루 {profile.pace}분</dd></div>
             </dl>

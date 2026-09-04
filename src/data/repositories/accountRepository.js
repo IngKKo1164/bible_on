@@ -33,6 +33,7 @@ function profileRow(userId, profile) {
     avatar_path: profile.avatarPath ?? remoteAvatarPath(profile.avatarImage),
     representative_verse_ref: profile.verseRef || null,
     representative_verse_text: profile.representativeVerse || null,
+    primary_community_id: profile.primaryCommunityId || null,
     featured_achievement_id: profile.featuredAchievementId || null,
     profile_data: {
       featuredAchievementName: profile.featuredAchievementName || '',
@@ -49,6 +50,7 @@ function mapProfile(profile) {
     avatarPath: profile.avatar_path ?? '',
     verseRef: profile.representative_verse_ref ?? '',
     representativeVerse: profile.representative_verse_text ?? '',
+    primaryCommunityId: profile.primary_community_id ?? '',
     featuredAchievementId: profile.featured_achievement_id ?? '',
     featuredAchievementName: profile.profile_data?.featuredAchievementName ?? '',
   };
@@ -202,6 +204,7 @@ async function migrateLocalAccountFoundation(client, user) {
       avatarImage: remoteProfile.avatar_path || localProfile.avatarImage,
       verseRef: remoteProfile.representative_verse_ref || localProfile.verseRef,
       representativeVerse: remoteProfile.representative_verse_text || localProfile.representativeVerse,
+      primaryCommunityId: remoteProfile.primary_community_id || localProfile.primaryCommunityId,
       featuredAchievementId: remoteProfile.featured_achievement_id || localProfile.featuredAchievementId,
       featuredAchievementName: remoteProfile.profile_data?.featuredAchievementName
         || localProfile.featuredAchievementName,

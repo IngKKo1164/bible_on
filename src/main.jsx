@@ -68,6 +68,7 @@ import { bibleCatalog, getBibleVerseCount, loadBibleChapter, preloadBible, searc
 import { searchOpenBibleTopicPassages } from './ragPrototype';
 import {
   CHURCH_PROFILES_STORAGE_KEY,
+  COMMUNITY_IDS_STORAGE_KEY,
   CURRENT_CHURCH_STORAGE_KEY,
   getRegisteredChurches,
   searchRegisteredChurches,
@@ -351,6 +352,18 @@ const churchInfo = {
   notice: '이번 주 셀모임은 예배 후 2층 라운지에서 모입니다.',
 };
 
+const MAX_COMMUNITIES = 3;
+const COMMUNITY_TYPE_LABELS = {
+  church: '교회',
+  club: '동아리',
+  small_group: '소모임',
+  community: '공동체',
+};
+
+function getCommunityTypeLabel(community) {
+  return COMMUNITY_TYPE_LABELS[community?.communityType] ?? COMMUNITY_TYPE_LABELS.community;
+}
+
 const communityPosts = [
   {
     author: '민서',
@@ -392,6 +405,7 @@ const defaultPersonalProfile = {
   representativeVerse: '내게 능력 주시는 자 안에서 내가 모든 것을 할 수 있느니라.',
   featuredAchievementId: '',
   featuredAchievementName: '',
+  primaryCommunityId: 'grace-spring',
 };
 
 const unavailableNicknames = new Set(['말씀지기', '은혜샘', '바이블온', 'grace24']);
@@ -436,7 +450,7 @@ const initialRecentNotifications = [
   },
   {
     id: 'notice-church',
-    type: '교회 공지',
+    type: '공동체 공지',
     title: '셀모임 장소 안내',
     body: '예배 후 2층 라운지에서 모입니다.',
     time: '28분 전',
@@ -446,7 +460,7 @@ const initialRecentNotifications = [
   },
   {
     id: 'notice-service',
-    type: '교회 업데이트',
+    type: '공동체 업데이트',
     title: '이번 주 예배 정보',
     body: '예배 말씀과 찬양 순서가 등록됐어요.',
     time: '1시간 전',
@@ -732,6 +746,7 @@ const initialWorshipPreparations = [
     pastor: churchInfo.pastor,
     serviceDate: weeklyPlan.time,
     createdAt: weeklyPlan.time,
+    communityId: 'grace-spring',
   },
 ];
 
@@ -742,6 +757,7 @@ const initialChurchAnnouncements = [
     content: churchInfo.notice,
     author: churchInfo.pastor,
     time: '오늘',
+    communityId: 'grace-spring',
   },
   {
     id: 'announcement-worship-time',
@@ -749,6 +765,7 @@ const initialChurchAnnouncements = [
     content: '이번 주 주일 2부 예배는 오전 11시에 시작합니다.',
     author: churchInfo.pastor,
     time: '어제',
+    communityId: 'grace-spring',
   },
   {
     id: 'announcement-parking',
@@ -756,6 +773,7 @@ const initialChurchAnnouncements = [
     content: '교회 주차장이 혼잡할 수 있으니 가급적 대중교통을 이용해 주세요.',
     author: '교회 사무실',
     time: '3일 전',
+    communityId: 'grace-spring',
   },
   {
     id: 'announcement-prayer',
@@ -763,6 +781,7 @@ const initialChurchAnnouncements = [
     content: '금요일 오후 8시 본당에서 함께 기도합니다.',
     author: '예배부',
     time: '5일 전',
+    communityId: 'grace-spring',
   },
 ];
 
@@ -820,7 +839,7 @@ function getConversationDetails(participantIds, customName = '', members = known
 
 const tabs = [
   { id: 'bible', label: '성경', icon: BookOpen },
-  { id: 'church', label: '교회', icon: Church },
+  { id: 'church', label: '공동체', icon: Users },
   { id: 'home', label: '홈', icon: Home },
   { id: 'messages', label: '메시지', icon: MessageCircle },
   { id: 'profile', label: '개인', icon: UserRound },
@@ -934,7 +953,7 @@ const APP_TUTORIAL_STEPS = [
   {
     target: 'bottom-navigation',
     title: '하단 메뉴',
-    description: '성경, 교회, 홈, 메시지, 개인 화면을 이곳에서 전환할 수 있어요.',
+    description: '성경, 공동체, 홈, 메시지, 개인 화면을 이곳에서 전환할 수 있어요.',
   },
   {
     target: 'bible-tab',
@@ -1271,6 +1290,12 @@ function App() {
     ...readStoredValue('bibleon.personalProfile', {}),
   }));
   const [currentChurchId, setCurrentChurchId] = useState(() => readStoredValue(CURRENT_CHURCH_STORAGE_KEY, 'grace-spring'));
+  const [communityIds, setCommunityIds] = useState(() => {
+    const storedIds = readStoredValue(COMMUNITY_IDS_STORAGE_KEY, []);
+    if (Array.isArray(storedIds) && storedIds.length) return [...new Set(storedIds)].slice(0, MAX_COMMUNITIES);
+    const legacyId = readStoredValue(CURRENT_CHURCH_STORAGE_KEY, 'grace-spring');
+    return legacyId ? [legacyId] : [];
+  });
   const [churchProfiles, setChurchProfiles] = useState(() => readStoredValue(CHURCH_PROFILES_STORAGE_KEY, {}));
   const [churchAccess, setChurchAccess] = useState(() => ({
     authority: churchInfo.authority,
@@ -1307,6 +1332,13 @@ function App() {
   const currentChurch = useMemo(() => (
     getRegisteredChurches(churchProfiles).find(({ id }) => id === currentChurchId) ?? null
   ), [churchProfiles, currentChurchId]);
+  const currentCommunities = useMemo(() => {
+    const profilesById = new Map(getRegisteredChurches(churchProfiles).map((community) => [community.id, community]));
+    return communityIds.map((id) => profilesById.get(id)).filter(Boolean);
+  }, [churchProfiles, communityIds]);
+  const representativeCommunity = personalProfile.primaryCommunityId
+    ? (currentCommunities.find(({ id }) => id === personalProfile.primaryCommunityId) ?? currentCommunities[0] ?? null)
+    : null;
   const activeHomeChat = homeChatRooms.find((room) => (
     room.id === activeHomeChatId && !room.deletedAt
   ));
@@ -1400,22 +1432,20 @@ function App() {
     ]);
     if (workspace) {
       setServerChurchWorkspace(workspace);
+      const remoteCommunityProfiles = await Promise.all((workspace.communities ?? []).map(async (community) => ({
+        ...community,
+        createdByAdmin: true,
+        profileImage: community.profileImagePath
+          ? await createSignedMediaUrl({ bucket: 'church-media', path: community.profileImagePath }).catch(() => '')
+          : '',
+      })));
+      setCommunityIds(remoteCommunityProfiles.map(({ id }) => id).slice(0, MAX_COMMUNITIES));
+      setChurchProfiles((current) => ({
+        ...current,
+        ...Object.fromEntries(remoteCommunityProfiles.map((community) => [community.id, community])),
+      }));
       if (workspace.church) {
-        const churchImage = workspace.church.profileImagePath
-          ? await createSignedMediaUrl({ bucket: 'church-media', path: workspace.church.profileImagePath }).catch(() => '')
-          : '';
         setCurrentChurchId(workspace.church.id);
-        setChurchProfiles({
-          [workspace.church.id]: {
-            id: workspace.church.id,
-            name: workspace.church.name,
-            createdByAdmin: true,
-            profileImage: churchImage,
-            profileImagePath: workspace.church.profileImagePath,
-            verseRef: workspace.church.verseRef,
-            representativeVerse: workspace.church.representativeVerse,
-          },
-        });
         const managedDepartmentId = workspace.members.find(({ userId }) => userId === currentAccountUser.id)
           ?.managedDepartmentIds?.[0] ?? '';
         setChurchAccess({
@@ -1424,7 +1454,6 @@ function App() {
         });
       } else {
         setCurrentChurchId('');
-        setChurchProfiles({});
         setChurchAccess({ authority: '성도', managerDepartmentId: '' });
       }
     }
@@ -1972,6 +2001,10 @@ function App() {
   }, [currentChurchId]);
 
   useEffect(() => {
+    writeStoredValue(COMMUNITY_IDS_STORAGE_KEY, communityIds);
+  }, [communityIds]);
+
+  useEffect(() => {
     writeStoredValue(CHURCH_PROFILES_STORAGE_KEY, churchProfiles);
   }, [churchProfiles]);
 
@@ -2197,24 +2230,48 @@ function App() {
     setChurchProfiles((current) => ({ ...current, [profile.id]: profile }));
   };
 
-  const registerCurrentChurch = async (church) => {
+  const selectCurrentCommunity = (communityId) => {
+    if (!communityId || communityId === currentChurchId) return;
+    setServerChurchWorkspace(null);
+    setCurrentChurchId(communityId);
     if (!currentAccountUser) {
+      const community = getRegisteredChurches(churchProfiles).find(({ id }) => id === communityId);
+      setChurchAccess({
+        authority: community?.localAuthority ?? (communityId === 'grace-spring' ? '관리자' : '성도'),
+        managerDepartmentId: '',
+      });
+    }
+  };
+
+  const registerCurrentChurch = async (church) => {
+    if (!church?.id) return;
+    if (!communityIds.includes(church.id) && communityIds.length >= MAX_COMMUNITIES) {
+      throw new Error('공동체는 최대 3개까지 함께 이용할 수 있어요.');
+    }
+    if (!currentAccountUser) {
+      setCommunityIds((current) => [...new Set([...current, church.id])].slice(0, MAX_COMMUNITIES));
       setCurrentChurchId(church.id);
+      setChurchAccess({ authority: church.localAuthority ?? '성도', managerDepartmentId: '' });
       return;
     }
     const status = await churchRepository.requestMembership(church.id);
-    if (status === 'active') setCurrentChurchId(church.id);
+    if (status === 'active') {
+      setCommunityIds((current) => [...new Set([...current, church.id])].slice(0, MAX_COMMUNITIES));
+      setCurrentChurchId(church.id);
+      return;
+    }
     await refreshSharedData();
   };
 
-  const createManagedChurch = async (name) => {
+  const createManagedChurch = async ({ name, communityType }) => {
     const trimmedName = name.trim();
-    if (!trimmedName) throw new Error('교회 이름을 입력해 주세요.');
+    if (!trimmedName) throw new Error('공동체 이름을 입력해 주세요.');
+    if (communityIds.length >= MAX_COMMUNITIES) throw new Error('공동체는 최대 3개까지 함께 이용할 수 있어요.');
     if (currentAccountUser) {
-      const churchId = await churchRepository.create(trimmedName);
+      const churchId = await churchRepository.create(trimmedName, communityType);
+      setCommunityIds((current) => [...new Set([...current, churchId])].slice(0, MAX_COMMUNITIES));
       setCurrentChurchId(churchId);
       setChurchAccess({ authority: '관리자', managerDepartmentId: '' });
-      await refreshSharedData();
       return churchId;
     }
 
@@ -2222,17 +2279,33 @@ function App() {
     const church = {
       id: churchId,
       name: trimmedName,
-      denomination: '교단 정보 미설정',
+      communityType,
+      denomination: communityType === 'church' ? '교단 정보 미설정' : getCommunityTypeLabel({ communityType }),
       location: '지역 정보 미설정',
       createdByAdmin: true,
+      localAuthority: '관리자',
       profileImage: '',
       verseRef: '',
-      representativeVerse: '교회 관리에서 대표 말씀을 설정해 주세요.',
+      representativeVerse: '공동체 관리에서 대표 말씀을 설정해 주세요.',
     };
     setChurchProfiles((current) => ({ ...current, [churchId]: church }));
+    setCommunityIds((current) => [...new Set([...current, churchId])].slice(0, MAX_COMMUNITIES));
     setCurrentChurchId(churchId);
     setChurchAccess({ authority: '관리자', managerDepartmentId: '' });
     return churchId;
+  };
+
+  const leaveCurrentCommunity = async () => {
+    const leavingId = currentChurchId;
+    if (!leavingId) return;
+    if (currentAccountUser) await churchRepository.leave(leavingId);
+    const remainingIds = communityIds.filter((id) => id !== leavingId);
+    setCommunityIds(remainingIds);
+    setCurrentChurchId(remainingIds[0] ?? '');
+    if (personalProfile.primaryCommunityId === leavingId) {
+      setPersonalProfile((current) => ({ ...current, primaryCommunityId: remainingIds[0] ?? '' }));
+    }
+    setServerChurchWorkspace(null);
   };
 
   const searchAvailableChurches = async (searchText) => {
@@ -2341,6 +2414,7 @@ function App() {
             chatTokensUsed={chatUsage.tokens}
             chatTokenLimit={chatTokenLimit}
             onConsumeChatTokens={consumeChatTokens}
+            currentCommunity={representativeCommunity}
           />
         )}
         {activeTab === 'bible' && (
@@ -2394,9 +2468,12 @@ function App() {
             onForwardMessage={forwardMessageToDestination}
             currentChurch={currentChurch}
             currentChurchId={currentChurchId}
+            communities={currentCommunities}
+            onSelectCommunity={selectCurrentCommunity}
             churchProfiles={churchProfiles}
             onRegisterChurch={registerCurrentChurch}
             onCreateChurch={createManagedChurch}
+            onLeaveCommunity={leaveCurrentCommunity}
             onSaveChurchProfile={saveCurrentChurchProfile}
             navigationTarget={churchNavigationTarget}
             onNavigationHandled={() => setChurchNavigationTarget(null)}
@@ -2444,7 +2521,8 @@ function App() {
             readingGrowthData={readingGrowthData}
             canCompleteReading={readingState.eligible}
             onRestartReading={restartBibleReading}
-            currentChurch={currentChurch}
+            currentChurch={representativeCommunity}
+            communities={currentCommunities}
             onSaveProfile={savePersonalProfile}
           />
         )}
@@ -2650,7 +2728,7 @@ function Topbar({
   ];
   const signedChurchMember = serverChurchWorkspace?.members?.find(({ userId }) => userId === accountUser?.id);
   const signedDepartment = serverChurchWorkspace?.departments?.find(({ id }) => id === signedChurchMember?.departmentId);
-  const settingsChurchName = currentChurch?.name || '등록된 교회 없음';
+  const settingsChurchName = currentChurch?.name || '참여 중인 공동체 없음';
   const settingsNickname = personalProfile?.nickname ? `@${personalProfile.nickname}` : '닉네임 미설정';
   const settingsDepartment = signedDepartment?.name || (currentChurch ? churchInfo.department : '소속 부서 없음');
   const settingsRole = signedChurchMember?.title
@@ -2853,7 +2931,7 @@ function Topbar({
                 aria-checked={messageAlerts}
                 onClick={() => setMessageAlerts((current) => !current)}
               >
-                <span><MessageCircle size={20} aria-hidden="true" /><span><strong>메시지 알림</strong><small>교회 구성원의 새 메시지</small></span></span>
+                 <span><MessageCircle size={20} aria-hidden="true" /><span><strong>메시지 알림</strong><small>공동체 구성원의 새 메시지</small></span></span>
                 <i className={messageAlerts ? 'is-on' : ''}><b /></i>
               </button>
               <button
@@ -2863,7 +2941,7 @@ function Topbar({
                 aria-checked={churchAlerts}
                 onClick={() => setChurchAlerts((current) => !current)}
               >
-                <span><Church size={20} aria-hidden="true" /><span><strong>교회 알림</strong><small>공지와 예배 정보 업데이트</small></span></span>
+                 <span><Users size={20} aria-hidden="true" /><span><strong>공동체 알림</strong><small>공지와 예배 정보 업데이트</small></span></span>
                 <i className={churchAlerts ? 'is-on' : ''}><b /></i>
               </button>
               <button
@@ -2947,9 +3025,9 @@ function Topbar({
                   <article className="settings-detail-content settings-privacy-policy">
                     <header><strong>바이블온 개인정보 및 보안 정책</strong><small>현재 적용 기준 · 2026년 9월 4일</small></header>
                     <section><h3>개인 기록</h3><p>성경 읽음, 메모, 강조, 통독, 업적과 홈 대화 기록은 로그인한 계정에 귀속됩니다. 로그인 전 기록은 해당 기기의 게스트 공간에만 보관됩니다.</p></section>
-                    <section><h3>공동체 기록</h3><p>교회 가입, 부서, 친구, 대화, QT, 공지와 예배 정보는 공동체 기능 제공을 위해 서버에 저장되며 허용된 구성원에게만 공개됩니다.</p></section>
+                    <section><h3>공동체 기록</h3><p>공동체 가입, 부서, 친구, 대화, QT, 공지와 예배 정보는 공동체 기능 제공을 위해 서버에 저장되며 허용된 구성원에게만 공개됩니다.</p></section>
                     <section><h3>파일과 기기 캐시</h3><p>프로필 이미지와 메시지 첨부파일은 비공개 저장소에 보관합니다. 성경 본문은 빠른 읽기를 위해 기기에 내려받아 캐시하며 계정 간에 내용을 공유해도 개인 기록은 공유하지 않습니다.</p></section>
-                    <section><h3>접근 보호</h3><p>데이터베이스 행 단위 접근 정책과 만료되는 파일 주소를 사용합니다. 사용자는 자신의 계정 데이터에만 접근하며, 대화와 교회 데이터는 참여 여부와 권한을 서버에서 확인합니다.</p></section>
+                    <section><h3>접근 보호</h3><p>데이터베이스 행 단위 접근 정책과 만료되는 파일 주소를 사용합니다. 사용자는 자신의 계정 데이터에만 접근하며, 대화와 공동체 데이터는 참여 여부와 권한을 서버에서 확인합니다.</p></section>
                     <section><h3>사용자 선택권</h3><p>프로필과 개인 기록은 앱에서 수정할 수 있습니다. 로그아웃하면 서버 계정과의 연결이 종료되며 기기의 로그인 세션을 제거합니다.</p></section>
                   </article>
                 )}
@@ -3304,6 +3382,7 @@ function HomeView({
   chatTokensUsed,
   chatTokenLimit,
   onConsumeChatTokens,
+  currentCommunity,
 }) {
   const [question, setQuestion] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -3510,15 +3589,17 @@ function HomeView({
                 <ChevronRight size={19} aria-hidden="true" />
               </button>
 
-              <section className="church-context">
-                <div className="church-context-mark"><Church size={22} aria-hidden="true" /></div>
-                <div>
-                  <span>내 교회</span>
-                  <strong>{churchInfo.name}</strong>
-                  <small>{churchInfo.department} · {churchInfo.role}</small>
-                </div>
-                <ChevronRight size={19} aria-hidden="true" />
-              </section>
+              {currentCommunity && (
+                <section className="church-context">
+                  <div className="church-context-mark"><Users size={22} aria-hidden="true" /></div>
+                  <div>
+                    <span>대표 공동체</span>
+                    <strong>{currentCommunity.name}</strong>
+                    <small>{getCommunityTypeLabel(currentCommunity)} · {churchInfo.department}</small>
+                  </div>
+                  <ChevronRight size={19} aria-hidden="true" />
+                </section>
+              )}
 
               <HomeRecommendations
                 query={query}
@@ -5166,9 +5247,12 @@ function ChurchView({
   onForwardMessage,
   currentChurch,
   currentChurchId,
+  communities,
+  onSelectCommunity,
   churchProfiles,
   onRegisterChurch,
   onCreateChurch,
+  onLeaveCommunity,
   onSaveChurchProfile,
   navigationTarget,
   onNavigationHandled,
@@ -5210,27 +5294,29 @@ function ChurchView({
   const activeQtRoom = qtRooms.find(({ id }) => id === activeQtRoomId);
   const currentAuthority = churchAccess?.authority ?? churchInfo.authority;
   const hasChurchAdminPermission = ['관리자', '부서 관리자'].includes(currentAuthority);
+  const communityAnnouncements = announcements.filter((item) => (item.communityId ?? 'grace-spring') === currentChurchId);
+  const communityWorshipPreparations = worshipPreparations.filter((item) => (item.communityId ?? 'grace-spring') === currentChurchId);
   const visibleAnnouncements = useMemo(() => {
-    if (currentAuthority === '관리자') return announcements;
+    if (currentAuthority === '관리자') return communityAnnouncements;
     const nodes = readStoredValue('bibleon.departmentNodes', initialDepartmentNodes);
     const currentDepartment = nodes.find(({ name }) => name === churchInfo.department);
-    return announcements.filter((announcement) => {
+    return communityAnnouncements.filter((announcement) => {
       if (!announcement.scopeDepartmentId) return true;
       if (!currentDepartment) return false;
       return getDepartmentSubtreeIds(nodes, announcement.scopeDepartmentId).has(currentDepartment.id);
     });
-  }, [announcements, currentAuthority]);
+  }, [communityAnnouncements, currentAuthority]);
   const visibleScheduledWorship = useMemo(() => {
-    if (currentAuthority === '관리자') return worshipPreparations.filter(({ status }) => status === 'scheduled');
+    if (currentAuthority === '관리자') return communityWorshipPreparations.filter(({ status }) => status === 'scheduled');
     const nodes = readStoredValue('bibleon.departmentNodes', initialDepartmentNodes);
     const currentDepartment = nodes.find(({ name }) => name === churchInfo.department);
-    return worshipPreparations.filter((item) => {
+    return communityWorshipPreparations.filter((item) => {
       if (item.status !== 'scheduled') return false;
       if (!item.scopeDepartmentId) return true;
       if (!currentDepartment) return false;
       return getDepartmentSubtreeIds(nodes, item.scopeDepartmentId).has(currentDepartment.id);
     });
-  }, [currentAuthority, worshipPreparations]);
+  }, [communityWorshipPreparations, currentAuthority]);
   const scheduledWorship = visibleScheduledWorship[0] ?? null;
 
   useEffect(() => writeStoredValue('bibleon.churchAnnouncements', announcements), [announcements]);
@@ -5242,9 +5328,10 @@ function ChurchView({
       id: announcement.id,
       title: announcement.title,
       content: announcement.content,
-      author: memberNames.get(announcement.created_by) ?? '교회 관리자',
+      author: memberNames.get(announcement.created_by) ?? '공동체 관리자',
       time: new Date(announcement.created_at).toLocaleDateString('ko-KR'),
       scopeDepartmentId: announcement.visibility_department_id,
+      communityId: currentChurchId,
     })));
     setWorshipPreparations(serverChurchWorkspace.worshipServices.map((service) => ({
       id: service.id,
@@ -5258,8 +5345,9 @@ function ChurchView({
       serviceDate: service.service_at ? new Date(service.service_at).toLocaleString('ko-KR') : '',
       createdAt: service.created_at,
       scopeDepartmentId: service.visibility_department_id,
+      communityId: currentChurchId,
     })));
-  }, [serverChurchWorkspace]);
+  }, [currentChurchId, serverChurchWorkspace]);
   useEffect(() => {
     if (!navigationTarget) return;
     if (navigationTarget.kind === 'announcement') {
@@ -5326,12 +5414,13 @@ function ChurchView({
     return (
       <div className="page-stack church-empty-page">
         <section className="church-empty-state">
-          <strong>등록된 교회가 존재하지 않아요</strong>
+          <strong>참여 중인 공동체가 없어요</strong>
+          <p>교회뿐 아니라 동아리와 소모임도 함께할 수 있어요.</p>
           <div className="church-empty-actions">
-            <button type="button" onClick={() => setChurchRegistrationOpen(true)}>나의 교회 추가하기</button>
+            <button type="button" onClick={() => setChurchRegistrationOpen(true)}>공동체 추가하기</button>
             <button className="is-secondary" type="button" onClick={() => setChurchAdminRegistrationOpen(true)}>
-              <span>나의 교회 등록하기</span>
-              <small>교회 관리자 전용</small>
+              <span>공동체 만들기</span>
+              <small>누구나 만들 수 있어요</small>
             </button>
           </div>
         </section>
@@ -5340,10 +5429,7 @@ function ChurchView({
             churchProfiles={churchProfiles}
             onSearchChurches={onSearchChurches}
             onClose={() => setChurchRegistrationOpen(false)}
-            onRegister={(church) => {
-              onRegisterChurch(church);
-              setChurchRegistrationOpen(false);
-            }}
+            onRegister={onRegisterChurch}
           />
         )}
         {churchAdminRegistrationOpen && (
@@ -5358,17 +5444,34 @@ function ChurchView({
 
   return (
     <div className="page-stack">
+      <section className="community-switcher" aria-label="공동체 전환">
+        <div className="community-switcher-track">
+          {communities.map((community) => (
+            <button
+              className={community.id === currentChurchId ? 'is-active' : ''}
+              type="button"
+              key={community.id}
+              onClick={() => onSelectCommunity(community.id)}
+            >
+              <span>{community.name}</span>
+              <small>{getCommunityTypeLabel(community)}</small>
+            </button>
+          ))}
+        </div>
+        <span>{communities.length} / {MAX_COMMUNITIES}</span>
+      </section>
+
       <section className="church-summary">
         <div className="church-summary-head">
           <span className={`church-avatar ${currentChurch.profileImage ? 'has-image' : ''}`}>
             {currentChurch.profileImage ? <img src={currentChurch.profileImage} alt="" /> : <Church size={25} aria-hidden="true" />}
           </span>
-          <div><span>나의 교회</span><h2>{currentChurch.name}</h2><p>{churchInfo.department} · 교인 {churchInfo.members}명</p></div>
+          <div><span>{getCommunityTypeLabel(currentChurch)}</span><h2>{currentChurch.name}</h2><p>{churchInfo.department} · 구성원 {churchInfo.members}명</p></div>
         </div>
         <blockquote className="church-representative-verse"><p>{currentChurch.representativeVerse}</p><cite>{currentChurch.verseRef}</cite></blockquote>
       </section>
 
-      <Section title="교회 소식">
+      <Section title="공동체 소식">
         <ListSurface>
           {visibleAnnouncements.slice(0, 1).map((announcement) => (
             <ListRow
@@ -5402,8 +5505,8 @@ function ChurchView({
         </ListSurface>
       </Section>
 
-      <Section title="이번 주 예배">
-        {scheduledWorship ? (
+      {scheduledWorship && (
+        <Section title="이번 주 예배">
           <div className={`service-expandable ${worshipExpanded ? 'is-expanded' : ''}`}>
             <button className="service-panel" type="button" aria-expanded={worshipExpanded} onClick={() => setWorshipExpanded((current) => !current)}>
               <div className="service-date"><span>예배</span><strong><Church size={22} aria-hidden="true" /></strong><small>예정</small></div>
@@ -5440,37 +5543,56 @@ function ChurchView({
               </div>
             )}
           </div>
-        ) : <p className="church-empty-notice">예정된 예배가 없어요.</p>}
-      </Section>
+        </Section>
+      )}
 
-      <section className="church-action-card" aria-label="교회 메뉴">
-        <button type="button" onClick={() => setCommunityNoticeOpen(true)}><span><strong>커뮤니티</strong><small>교회 구성원과 소식을 나눠요</small></span><ChevronRight size={18} /></button>
+      <section className="church-action-card" aria-label="공동체 메뉴">
+        <button type="button" onClick={() => setCommunityNoticeOpen(true)}><span><strong>커뮤니티</strong><small>공동체 구성원과 소식을 나눠요</small></span><ChevronRight size={18} /></button>
         <button type="button" onClick={() => setQtCreatorOpen(true)}><span><strong>QT</strong><small>친구와 말씀을 묵상하고 나눠요</small></span><ChevronRight size={18} /></button>
         <button type="button" onClick={() => setDepartmentDirectoryOpen(true)}><span><strong>부서</strong><small>{churchInfo.department} 구성원과 일정을 확인해요</small></span><ChevronRight size={18} /></button>
       </section>
+
+      <div className="community-membership-actions">
+        <button type="button" disabled={communities.length >= MAX_COMMUNITIES} onClick={() => setChurchRegistrationOpen(true)}><UserPlus size={15} />공동체 추가</button>
+        <button type="button" disabled={communities.length >= MAX_COMMUNITIES} onClick={() => setChurchAdminRegistrationOpen(true)}><Plus size={15} />공동체 만들기</button>
+      </div>
 
       <div className="church-account-actions">
         <button
           className="church-management-entry"
           type="button"
-          aria-label="교회 관리"
+          aria-label="공동체 관리"
           onClick={() => {
             if (hasChurchAdminPermission) setManagementOpen(true);
             else setManagementWarningOpen(true);
           }}
         >
-          <Cog size={15} aria-hidden="true" />교회 관리
+          <Cog size={15} aria-hidden="true" />공동체 관리
         </button>
         <button className="church-leave-entry" type="button" onClick={() => {
           if (currentAuthority === '관리자') setLeaveRestriction('administrator');
           else if (currentAuthority === '부서 관리자') setLeaveRestriction('department-manager');
           else setLeaveChurchConfirmOpen(true);
         }}>
-          교회 나가기
+          공동체 나가기
         </button>
       </div>
 
       {communityNoticeOpen && <ChurchReadyNotice onClose={() => setCommunityNoticeOpen(false)} />}
+      {churchRegistrationOpen && (
+        <ChurchRegistrationSheet
+          churchProfiles={churchProfiles}
+          onSearchChurches={onSearchChurches}
+          onClose={() => setChurchRegistrationOpen(false)}
+          onRegister={onRegisterChurch}
+        />
+      )}
+      {churchAdminRegistrationOpen && (
+        <ChurchAdminRegistrationSheet
+          onClose={() => setChurchAdminRegistrationOpen(false)}
+          onCreate={onCreateChurch}
+        />
+      )}
       {worshipReadyNoticeOpen && <ChurchReadyNotice title="준비중" description="찬양 듣기 기능을 준비하고 있어요." onClose={() => setWorshipReadyNoticeOpen(false)} />}
       {worshipMemoOpen && scheduledWorship && (
         <WorshipMemoScreen
@@ -5484,7 +5606,7 @@ function ChurchView({
       {managementWarningOpen && (
         <ConfirmDialog
           title="관리자 권한이 필요해요"
-          description="교회 관리자로 인증된 계정만 부서, 예배와 공지사항을 관리할 수 있어요."
+          description="공동체 관리자만 부서, 예배와 공지사항을 관리할 수 있어요."
           confirmLabel="확인"
           onClose={() => setManagementWarningOpen(false)}
           onConfirm={() => setManagementWarningOpen(false)}
@@ -5494,13 +5616,13 @@ function ChurchView({
       {leaveChurchConfirmOpen && (
         <ConfirmDialog
           title={`${currentChurch.name}에서 나갈까요?`}
-          description="교회 소식과 부서 정보를 더 이상 볼 수 없어요. 나중에 다시 가입을 신청할 수 있습니다."
-          confirmLabel="교회 나가기"
+          description="공동체 소식과 부서 정보를 더 이상 볼 수 없어요. 나중에 다시 참여를 신청할 수 있습니다."
+          confirmLabel="공동체 나가기"
           danger
           onClose={() => setLeaveChurchConfirmOpen(false)}
           onConfirm={() => {
             setLeaveChurchConfirmOpen(false);
-            onRegisterChurch('');
+            void onLeaveCommunity();
           }}
         />
       )}
@@ -5509,8 +5631,8 @@ function ChurchView({
         <ConfirmDialog
           title={leaveRestriction === 'administrator' ? '관리자 위임이 필요해요' : '부서 관리자 권한을 먼저 해제해야 해요'}
           description={leaveRestriction === 'administrator'
-            ? '교회를 나가기 전에 교회 관리 설정에서 다른 공동체원에게 교회 관리자 권한을 위임해 주세요.'
-            : '부서 관리자는 스스로 교회를 나갈 수 없어요. 교회 관리자에게 직위 해제를 요청해 주세요.'}
+            ? '공동체를 나가기 전에 공동체 관리 설정에서 다른 구성원에게 관리자 권한을 위임해 주세요.'
+            : '부서 관리자는 스스로 공동체를 나갈 수 없어요. 공동체 관리자에게 직위 해제를 요청해 주세요.'}
           confirmLabel="확인"
           onClose={() => setLeaveRestriction('')}
           onConfirm={() => setLeaveRestriction('')}
@@ -5531,6 +5653,7 @@ function ChurchView({
           setAnnouncements={setAnnouncements}
           worshipPreparations={worshipPreparations}
           setWorshipPreparations={setWorshipPreparations}
+          currentCommunityId={currentChurchId}
           churchProfile={currentChurch}
           selectedTranslation={selectedTranslation}
           onSaveChurchProfile={onSaveChurchProfile}
@@ -5665,7 +5788,7 @@ function WorshipMemoScreen({ worship, value, onChange, onClose }) {
   );
 }
 
-function ChurchReadyNotice({ onClose, title = '출시 준비중', description = '교회 커뮤니티는 더 좋은 모습으로 준비하고 있어요.' }) {
+function ChurchReadyNotice({ onClose, title = '출시 준비중', description = '공동체 커뮤니티는 더 좋은 모습으로 준비하고 있어요.' }) {
   const { isClosing, dismiss } = useSlideDismiss(onClose);
 
   return (
@@ -5685,6 +5808,8 @@ function ChurchRegistrationSheet({ churchProfiles, onClose, onRegister, onSearch
   const [query, setQuery] = useState('');
   const [selectedChurch, setSelectedChurch] = useState(null);
   const [unregisteredName, setUnregisteredName] = useState('');
+  const [pending, setPending] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const { isClosing, dismiss } = useSlideDismiss(onClose);
   const [suggestions, setSuggestions] = useState([]);
 
@@ -5725,31 +5850,43 @@ function ChurchRegistrationSheet({ churchProfiles, onClose, onRegister, onSearch
 
   return (
     <div className={`church-registration-layer ${isClosing ? 'is-closing' : ''}`}>
-      <button className="church-registration-backdrop" type="button" aria-label="교회 등록 닫기" onClick={() => dismiss()} />
+      <button className="church-registration-backdrop" type="button" aria-label="공동체 추가 닫기" onClick={() => dismiss()} />
       <section className="church-registration-sheet" role="dialog" aria-modal="true" aria-labelledby="church-registration-title">
-        <header><div><h2 id="church-registration-title">교회 등록</h2><p>관리자가 등록한 교회만 검색됩니다.</p></div><button type="button" aria-label="교회 등록 닫기" onClick={() => dismiss()}><X size={20} /></button></header>
+        <header><div><h2 id="church-registration-title">공동체 추가</h2><p>이미 만들어진 공동체를 검색해 참여합니다.</p></div><button type="button" aria-label="공동체 추가 닫기" onClick={() => dismiss()}><X size={20} /></button></header>
         <form className="church-registration-search" onSubmit={searchChurch}>
-          <label><Search size={18} aria-hidden="true" /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setSelectedChurch(null); setUnregisteredName(''); }} placeholder="교회 이름을 검색해 주세요" /><button type="submit">검색</button></label>
+          <label><Search size={18} aria-hidden="true" /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setSelectedChurch(null); setUnregisteredName(''); setErrorMessage(''); }} placeholder="공동체 이름을 검색해 주세요" /><button type="submit">검색</button></label>
         </form>
         <div className="church-registration-results">
           {suggestions.map((church) => (
             <button type="button" key={church.id} onClick={() => { setSelectedChurch(church); setQuery(church.name); setUnregisteredName(''); }}>
-              <span className={`church-search-avatar ${church.profileImage ? 'has-image' : ''}`}>{church.profileImage ? <img src={church.profileImage} alt="" /> : <Church size={20} />}</span>
-              <span><strong>{church.name}</strong><small>{church.location} · {church.denomination}</small><em>{church.verseRef} · {church.representativeVerse}</em></span>
+              <span className={`church-search-avatar ${church.profileImage ? 'has-image' : ''}`}>{church.profileImage ? <img src={church.profileImage} alt="" /> : <Users size={20} />}</span>
+              <span><strong>{church.name}</strong><small>{getCommunityTypeLabel(church)} · {church.location || '지역 미설정'}</small><em>{church.verseRef} · {church.representativeVerse}</em></span>
               <ChevronRight size={17} aria-hidden="true" />
             </button>
           ))}
           {selectedChurch && (
             <article className="church-registration-selected">
-              <span className={`church-search-avatar ${selectedChurch.profileImage ? 'has-image' : ''}`}>{selectedChurch.profileImage ? <img src={selectedChurch.profileImage} alt="" /> : <Church size={22} />}</span>
-              <div><strong>{selectedChurch.name}</strong><small>{selectedChurch.location} · {selectedChurch.denomination}</small><blockquote>{selectedChurch.representativeVerse}<cite>{selectedChurch.verseRef}</cite></blockquote></div>
+              <span className={`church-search-avatar ${selectedChurch.profileImage ? 'has-image' : ''}`}>{selectedChurch.profileImage ? <img src={selectedChurch.profileImage} alt="" /> : <Users size={22} />}</span>
+              <div><strong>{selectedChurch.name}</strong><small>{getCommunityTypeLabel(selectedChurch)} · {selectedChurch.location || '지역 미설정'}</small><blockquote>{selectedChurch.representativeVerse}<cite>{selectedChurch.verseRef}</cite></blockquote></div>
             </article>
           )}
           {unregisteredName && (
-            <div className="church-registration-missing" role="status"><strong>‘{unregisteredName}’은 아직 등록되지 않은 교회예요.</strong><p>교회 관리자에게 바이블온에서 교회를 등록하면 함께 사용할 수 있다고 알려주세요.</p></div>
+            <div className="church-registration-missing" role="status"><strong>‘{unregisteredName}’ 공동체를 찾지 못했어요.</strong><p>공동체를 새로 만들거나, 만든 사람에게 정확한 이름을 확인해 주세요.</p></div>
           )}
+          {errorMessage && <p className="church-admin-registration-error" role="alert">{errorMessage}</p>}
         </div>
-        <button className="church-registration-confirm" type="button" disabled={!selectedChurch} onClick={() => dismiss(() => onRegister(selectedChurch))}>이 교회 등록</button>
+        <button className="church-registration-confirm" type="button" disabled={!selectedChurch || pending} onClick={async () => {
+          if (!selectedChurch) return;
+          setPending(true);
+          setErrorMessage('');
+          try {
+            await onRegister(selectedChurch);
+            dismiss();
+          } catch (error) {
+            setErrorMessage(error?.message || '공동체에 참여하지 못했어요. 잠시 후 다시 시도해 주세요.');
+            setPending(false);
+          }
+        }}>{pending ? '참여하고 있어요' : '이 공동체에 참여'}</button>
       </section>
     </div>
   );
@@ -5757,12 +5894,12 @@ function ChurchRegistrationSheet({ churchProfiles, onClose, onRegister, onSearch
 
 function ChurchAdminRegistrationSheet({ onClose, onCreate }) {
   const [churchName, setChurchName] = useState('');
-  const [authorityConfirmed, setAuthorityConfirmed] = useState(false);
+  const [communityType, setCommunityType] = useState('small_group');
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const { isClosing, dismiss } = useSlideDismiss(onClose);
   const normalizedName = churchName.trim();
-  const canCreate = normalizedName.length >= 2 && authorityConfirmed && !pending;
+  const canCreate = normalizedName.length >= 2 && !pending;
 
   const submitRegistration = async (event) => {
     event.preventDefault();
@@ -5770,41 +5907,38 @@ function ChurchAdminRegistrationSheet({ onClose, onCreate }) {
     setPending(true);
     setErrorMessage('');
     try {
-      await onCreate(normalizedName);
+      await onCreate({ name: normalizedName, communityType });
       dismiss();
     } catch (error) {
       const duplicate = `${error?.message ?? ''}`.toLowerCase().includes('duplicate');
       setErrorMessage(duplicate
-        ? '같은 이름으로 등록된 교회가 있어요. 나의 교회 추가하기에서 검색해 주세요.'
-        : (error?.message || '교회를 등록하지 못했어요. 잠시 후 다시 시도해 주세요.'));
+        ? '같은 이름의 공동체가 있어요. 공동체 추가에서 검색해 주세요.'
+        : (error?.message || '공동체를 만들지 못했어요. 잠시 후 다시 시도해 주세요.'));
       setPending(false);
     }
   };
 
   return (
     <div className={`church-registration-layer ${isClosing ? 'is-closing' : ''}`}>
-      <button className="church-registration-backdrop" type="button" aria-label="교회 관리자 등록 닫기" onClick={() => dismiss()} />
+      <button className="church-registration-backdrop" type="button" aria-label="공동체 만들기 닫기" onClick={() => dismiss()} />
       <section className="church-registration-sheet church-admin-registration-sheet" role="dialog" aria-modal="true" aria-labelledby="church-admin-registration-title">
         <header>
-          <div><h2 id="church-admin-registration-title">나의 교회 등록하기</h2><p>교회를 대표하는 관리자만 등록할 수 있습니다.</p></div>
-          <button type="button" aria-label="교회 관리자 등록 닫기" onClick={() => dismiss()}><X size={20} /></button>
+          <div><h2 id="church-admin-registration-title">공동체 만들기</h2><p>누구나 새로운 공동체를 시작할 수 있어요.</p></div>
+          <button type="button" aria-label="공동체 만들기 닫기" onClick={() => dismiss()}><X size={20} /></button>
         </header>
         <form onSubmit={submitRegistration}>
           <label className="church-admin-name-field">
-            <span>교회 이름</span>
-            <input autoFocus maxLength={80} value={churchName} onChange={(event) => setChurchName(event.target.value)} placeholder="정식 교회 이름을 입력해 주세요" />
+            <span>공동체 이름</span>
+            <input autoFocus maxLength={80} value={churchName} onChange={(event) => setChurchName(event.target.value)} placeholder="공동체 이름을 입력해 주세요" />
           </label>
-          <div className="church-admin-registration-notice">
-            <strong>등록한 계정이 교회 관리자가 됩니다.</strong>
-            <p>교회 정보, 공동체원, 부서, 예배와 공지를 관리할 수 있어요. 실제 운영 전에는 교회 대표자 확인 절차를 추가할 예정입니다.</p>
+          <div className="community-type-picker" role="radiogroup" aria-label="공동체 유형">
+            {Object.entries({ church: '교회', club: '동아리', small_group: '소모임' }).map(([id, label]) => (
+              <button className={communityType === id ? 'is-selected' : ''} type="button" role="radio" aria-checked={communityType === id} key={id} onClick={() => setCommunityType(id)}>{label}</button>
+            ))}
           </div>
-          <label className="church-admin-authority-check">
-            <input type="checkbox" checked={authorityConfirmed} onChange={(event) => setAuthorityConfirmed(event.target.checked)} />
-            <span aria-hidden="true">{authorityConfirmed && <Check size={14} />}</span>
-            <strong>이 교회를 대표해 등록할 권한이 있습니다.</strong>
-          </label>
+          <div className="church-admin-registration-notice"><strong>만든 사람이 관리자가 됩니다.</strong><p>구성원, 부서와 공지를 관리할 수 있고 예배 준비는 필요할 때만 사용할 수 있어요.</p></div>
           {errorMessage && <p className="church-admin-registration-error" role="alert">{errorMessage}</p>}
-          <button className="church-registration-confirm" type="submit" disabled={!canCreate}>{pending ? '교회를 등록하고 있어요' : '교회 등록하기'}</button>
+          <button className="church-registration-confirm" type="submit" disabled={!canCreate}>{pending ? '공동체를 만들고 있어요' : '공동체 만들기'}</button>
         </form>
       </section>
     </div>
@@ -5830,7 +5964,7 @@ function ChurchDepartmentDirectorySheet({ onClose }) {
       <button className="admin-sheet-backdrop" type="button" aria-label="부서 보기 닫기" onClick={() => dismiss()} />
       <section className="church-department-directory-sheet" role="dialog" aria-modal="true" aria-labelledby="church-department-directory-title">
         <header>
-          <div><h2 id="church-department-directory-title">교회 부서</h2><p>부서를 눌러 소속 구성원을 확인할 수 있어요.</p></div>
+          <div><h2 id="church-department-directory-title">공동체 부서</h2><p>부서를 눌러 소속 구성원을 확인할 수 있어요.</p></div>
           <button type="button" aria-label="부서 보기 닫기" onClick={() => dismiss()}><X size={20} /></button>
         </header>
         <div className="church-department-directory-list">
@@ -5919,6 +6053,7 @@ function ChurchManagementScreen({
   setAnnouncements,
   worshipPreparations,
   setWorshipPreparations,
+  currentCommunityId,
   churchProfile,
   selectedTranslation,
   onSaveChurchProfile,
@@ -5972,8 +6107,14 @@ function ChurchManagementScreen({
     : [];
   const positionTarget = communityMembers.find(({ id }) => id === positionTargetId);
   const kickTarget = communityMembers.find(({ id }) => id === kickTargetId);
-  const scopedWorshipPreparations = worshipPreparations.filter((item) => !item.scopeDepartmentId || manageableNodeIds.has(item.scopeDepartmentId));
-  const scopedAnnouncements = announcements.filter((item) => !item.scopeDepartmentId || manageableNodeIds.has(item.scopeDepartmentId));
+  const scopedWorshipPreparations = worshipPreparations.filter((item) => (
+    (item.communityId ?? 'grace-spring') === currentCommunityId
+    && (!item.scopeDepartmentId || manageableNodeIds.has(item.scopeDepartmentId))
+  ));
+  const scopedAnnouncements = announcements.filter((item) => (
+    (item.communityId ?? 'grace-spring') === currentCommunityId
+    && (!item.scopeDepartmentId || manageableNodeIds.has(item.scopeDepartmentId))
+  ));
 
   const handleBack = () => {
     if (moveSelectedIds.length) {
@@ -6019,7 +6160,7 @@ function ChurchManagementScreen({
 
   const saveChurchProfile = () => {
     onSaveChurchProfile(churchProfileDraft);
-    showAdminNotice('교회 프로필을 저장했어요.');
+    showAdminNotice('공동체 프로필을 저장했어요.');
   };
 
   const requestCreateDepartment = (parentNode) => {
@@ -6117,7 +6258,7 @@ function ChurchManagementScreen({
       const next = {
         ...current,
         [pendingAdminTransfer.id]: {
-          title: '교회 관리자',
+          title: '공동체 관리자',
           authority: '관리자',
           managerDepartmentId: null,
         },
@@ -6174,6 +6315,7 @@ function ChurchManagementScreen({
       ...draft,
       createdAt: '방금 작성',
       scopeDepartmentId: managerDepartmentId || null,
+      communityId: currentCommunityId,
     }, ...current]);
     setWorshipFormOpen(false);
     showAdminNotice('예배 준비를 대기 상태로 저장했어요.');
@@ -6196,22 +6338,23 @@ function ChurchManagementScreen({
       author: '김온유 관리자',
       time: '방금',
       scopeDepartmentId: managerDepartmentId || null,
+      communityId: currentCommunityId,
     };
     setAnnouncements((current) => [announcement, ...current]);
     setAnnouncementDraft({ title: '', content: '' });
-    showAdminNotice('교회 공지사항을 등록했어요.');
+    showAdminNotice('공동체 공지사항을 등록했어요.');
   };
 
   return (
     <section
       className={`church-admin-screen ${swipeBack.className}`}
       style={swipeBack.style}
-      aria-label="교회 관리"
+      aria-label="공동체 관리"
       {...swipeBack.handlers}
     >
       <header>
-        <button type="button" aria-label="교회 관리 뒤로가기" onClick={handleBack}><ChevronLeft size={24} /></button>
-        <h2>{moveSelectedIds.length ? `${moveSelectedIds.length}명 선택` : (activeDepartment?.name ?? '교회 관리')}</h2>
+        <button type="button" aria-label="공동체 관리 뒤로가기" onClick={handleBack}><ChevronLeft size={24} /></button>
+        <h2>{moveSelectedIds.length ? `${moveSelectedIds.length}명 선택` : (activeDepartment?.name ?? '공동체 관리')}</h2>
         {moveSelectedIds.length
           ? <button type="button" aria-label="부서 이동 대상 선택" disabled={!moveSelectedIds.length} onClick={() => setMovePickerOpen(true)}><Check size={22} /></button>
           : mode === 'worship' && !activeDepartment
@@ -6219,7 +6362,7 @@ function ChurchManagementScreen({
             : <span />}
       </header>
       {!activeDepartment && (
-        <div className={`church-admin-tabs ${isChurchAdministrator ? 'has-settings' : ''}`} role="tablist" aria-label="교회 관리 메뉴">
+        <div className={`church-admin-tabs ${isChurchAdministrator ? 'has-settings' : ''}`} role="tablist" aria-label="공동체 관리 메뉴">
           <button className={mode === 'departments' ? 'is-active' : ''} type="button" role="tab" aria-selected={mode === 'departments'} onClick={() => setMode('departments')}>부서</button>
           <button className={mode === 'worship' ? 'is-active' : ''} type="button" role="tab" aria-selected={mode === 'worship'} onClick={() => setMode('worship')}>예배 준비</button>
           <button className={mode === 'announcements' ? 'is-active' : ''} type="button" role="tab" aria-selected={mode === 'announcements'} onClick={() => setMode('announcements')}>공지사항</button>
@@ -6229,7 +6372,7 @@ function ChurchManagementScreen({
 
       <div className="church-admin-content">
         {mode === 'departments' && !activeDepartment && (
-          <div className="department-tree" aria-label="교회 부서 구조">
+          <div className="department-tree" aria-label="공동체 부서 구조">
             {visibleFlattenedNodes.map((node) => (
               <div className={`department-node ${node.depth === 0 ? 'is-root' : ''}`} style={{ '--department-depth': node.depth }} key={node.id}>
                 <button className="department-node-main" type="button" onClick={() => setActiveDepartmentId(node.id)}>
@@ -6300,7 +6443,7 @@ function ChurchManagementScreen({
           <div className="announcement-admin">
             <form onSubmit={publishAnnouncement}>
               <label><span>제목</span><input value={announcementDraft.title} onChange={(event) => setAnnouncementDraft((current) => ({ ...current, title: event.target.value }))} placeholder="공지 제목" /></label>
-              <label><span>내용</span><textarea value={announcementDraft.content} onChange={(event) => setAnnouncementDraft((current) => ({ ...current, content: event.target.value }))} placeholder="교회 구성원에게 알릴 내용을 적어주세요" /></label>
+              <label><span>내용</span><textarea value={announcementDraft.content} onChange={(event) => setAnnouncementDraft((current) => ({ ...current, content: event.target.value }))} placeholder="공동체 구성원에게 알릴 내용을 적어주세요" /></label>
               <button type="submit" disabled={!announcementDraft.title.trim() || !announcementDraft.content.trim()}><Megaphone size={17} />공지 등록</button>
             </form>
             <div className="announcement-admin-list">
@@ -6312,7 +6455,7 @@ function ChurchManagementScreen({
         {mode === 'settings' && isChurchAdministrator && (
           <div className="church-admin-settings">
             <section className="church-admin-setting-card church-profile-setting-card">
-              <header><span><Church size={19} aria-hidden="true" /></span><div><strong>교회 프로필</strong><small>교회 탭과 가입 검색에 함께 표시됩니다.</small></div></header>
+              <header><span><Users size={19} aria-hidden="true" /></span><div><strong>공동체 프로필</strong><small>공동체 탭과 검색에 함께 표시됩니다.</small></div></header>
               <div className="church-profile-photo-setting">
                 <span className={`church-profile-preview ${churchProfileDraft.profileImage ? 'has-image' : ''}`}>
                   {churchProfileDraft.profileImage ? <img src={churchProfileDraft.profileImage} alt="" /> : <Church size={26} aria-hidden="true" />}
@@ -6328,12 +6471,12 @@ function ChurchManagementScreen({
                 <span><strong>{churchProfileDraft.verseRef}</strong><small>{churchProfileDraft.representativeVerse}</small></span>
                 <ChevronRight size={18} aria-hidden="true" />
               </button>
-              <button className="church-profile-save" type="button" onClick={saveChurchProfile}>교회 프로필 저장</button>
+              <button className="church-profile-save" type="button" onClick={saveChurchProfile}>공동체 프로필 저장</button>
             </section>
             <section className="church-admin-setting-card">
-              <header><span><Users size={19} aria-hidden="true" /></span><div><strong>공동체원</strong><small>교회 가입과 신청을 관리합니다.</small></div></header>
+              <header><span><Users size={19} aria-hidden="true" /></span><div><strong>구성원</strong><small>공동체 참여와 신청을 관리합니다.</small></div></header>
               <button className="church-admin-toggle-row" type="button" role="switch" aria-checked={autoJoinEnabled} onClick={() => { setAutoJoinEnabled((current) => !current); setRequestListOpen(false); }}>
-                <span><strong>자동 가입</strong><small>교회를 선택한 사용자를 바로 승인합니다.</small></span>
+                <span><strong>자동 가입</strong><small>공동체를 선택한 사용자를 바로 승인합니다.</small></span>
                 <i className={autoJoinEnabled ? 'is-on' : ''}><b /></i>
               </button>
               <button className="church-join-request-entry" type="button" disabled={autoJoinEnabled} aria-expanded={requestListOpen} onClick={() => setRequestListOpen((current) => !current)}>
@@ -6355,7 +6498,7 @@ function ChurchManagementScreen({
               )}
             </section>
             <section className="church-admin-setting-card">
-              <header><span><ShieldCheck size={19} aria-hidden="true" /></span><div><strong>관리자 위임</strong><small>다른 공동체원에게 교회 전체 관리 권한을 넘깁니다.</small></div></header>
+              <header><span><ShieldCheck size={19} aria-hidden="true" /></span><div><strong>관리자 위임</strong><small>다른 구성원에게 공동체 전체 관리 권한을 넘깁니다.</small></div></header>
               <button className="church-admin-transfer-entry" type="button" onClick={() => setAdminTransferOpen(true)}>
                 <span><strong>새 관리자 선택</strong><small>위임하면 내 관리자 권한은 즉시 해제됩니다.</small></span>
                 <ChevronRight size={18} aria-hidden="true" />
@@ -6424,7 +6567,7 @@ function ChurchManagementScreen({
       {pendingPosition && (
         <ConfirmDialog
           title="직위를 변경할까요?"
-          description={`${pendingPosition.memberName}님의 직위를 '${pendingPosition.title}'(으)로 변경합니다.${pendingPosition.isDepartmentManager ? ' 교회 관리의 해당 부서 권한도 함께 부여됩니다.' : ''}`}
+          description={`${pendingPosition.memberName}님의 직위를 '${pendingPosition.title}'(으)로 변경합니다.${pendingPosition.isDepartmentManager ? ' 공동체 관리의 해당 부서 권한도 함께 부여됩니다.' : ''}`}
           confirmLabel="직위 변경"
           onClose={() => setPendingPosition(null)}
           onConfirm={confirmMemberPosition}
@@ -6433,7 +6576,7 @@ function ChurchManagementScreen({
       {kickTarget && (
         <ConfirmDialog
           title={`${kickTarget.name}님을 강퇴할까요?`}
-          description="이 구성원은 현재 교회와 모든 부서에서 제외됩니다."
+          description="이 구성원은 현재 공동체와 모든 부서에서 제외됩니다."
           confirmLabel="공동체 강퇴"
           danger
           onClose={() => setKickTargetId('')}
@@ -6445,7 +6588,7 @@ function ChurchManagementScreen({
         <RepresentativeVersePicker
           currentProfile={churchProfileDraft}
           selectedTranslation={selectedTranslation}
-          title="교회 대표 말씀 선택"
+          title="공동체 대표 말씀 선택"
           onClose={() => setChurchVersePickerOpen(false)}
           onSelect={(verse) => {
             setChurchProfileDraft((current) => ({ ...current, verseRef: verse.reference, representativeVerse: verse.text }));
@@ -6466,7 +6609,7 @@ function ChurchManagementScreen({
       {pendingAdminTransfer && (
         <ConfirmDialog
           title={`${pendingAdminTransfer.name}님에게 관리자 권한을 위임할까요?`}
-          description="위임하는 즉시 내 교회 관리자 권한은 해제됩니다. 새 관리자만 교회 전체 설정과 권한을 관리할 수 있어요."
+          description="위임하는 즉시 내 공동체 관리자 권한은 해제됩니다. 새 관리자만 공동체 전체 설정과 권한을 관리할 수 있어요."
           confirmLabel="관리자 위임"
           onClose={() => setPendingAdminTransfer(null)}
           onConfirm={confirmAdminTransfer}
@@ -6492,9 +6635,9 @@ function ChurchAdminTransferSheet({ members, onClose, onConfirm }) {
     <div className={`admin-sheet-layer ${isClosing ? 'is-closing' : ''}`}>
       <button className="admin-sheet-backdrop" type="button" aria-label="관리자 위임 닫기" onClick={() => dismiss()} />
       <section className="church-admin-transfer-sheet" role="dialog" aria-modal="true" aria-labelledby="admin-transfer-title">
-        <header><div><h2 id="admin-transfer-title">새 관리자 선택</h2><p>교회 전체를 관리할 공동체원 한 명을 선택하세요.</p></div><button type="button" aria-label="관리자 위임 닫기" onClick={() => dismiss()}><X size={20} /></button></header>
+        <header><div><h2 id="admin-transfer-title">새 관리자 선택</h2><p>공동체 전체를 관리할 구성원 한 명을 선택하세요.</p></div><button type="button" aria-label="관리자 위임 닫기" onClick={() => dismiss()}><X size={20} /></button></header>
         <label className="admin-transfer-search"><Search size={17} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="이름 또는 부서 검색" /></label>
-        <div className="admin-transfer-member-list" role="radiogroup" aria-label="새 교회 관리자">
+        <div className="admin-transfer-member-list" role="radiogroup" aria-label="새 공동체 관리자">
           {filteredMembers.map((member) => (
             <button className={selectedId === member.id ? 'is-selected' : ''} type="button" role="radio" aria-checked={selectedId === member.id} key={member.id} onClick={() => setSelectedId(member.id)}>
               <span className={`member-avatar tone-${member.tone ?? 'violet'}`}><UserRound className="default-profile-glyph" /></span>
@@ -6544,8 +6687,8 @@ function DepartmentMemberSheet({ node, nodes, members, onClose, onConfirm }) {
     <div className={`admin-sheet-layer ${isClosing ? 'is-closing' : ''}`}>
       <button className="admin-sheet-backdrop" type="button" aria-label="구성원 지정 닫기" onClick={() => dismiss()} />
       <section className="department-member-sheet" role="dialog" aria-modal="true" aria-labelledby="department-member-title">
-        <header><div><h2 id="department-member-title">{node.name} 구성원 지정</h2><p>{parent ? `${parent.name} 소속 구성원만 표시됩니다.` : '현재 교회 구성원만 표시됩니다.'}</p></div><button type="button" aria-label="구성원 지정 닫기" onClick={() => dismiss()}><X size={20} /></button></header>
-        <label className="admin-member-search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="교회 구성원 검색" /></label>
+        <header><div><h2 id="department-member-title">{node.name} 구성원 지정</h2><p>{parent ? `${parent.name} 소속 구성원만 표시됩니다.` : '현재 공동체 구성원만 표시됩니다.'}</p></div><button type="button" aria-label="구성원 지정 닫기" onClick={() => dismiss()}><X size={20} /></button></header>
+        <label className="admin-member-search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="공동체 구성원 검색" /></label>
         <div className="admin-member-list">
           {candidates.map((member) => {
             const selected = selectedIds.includes(member.id);
@@ -6614,7 +6757,7 @@ function MemberPositionSheet({ member, department, currentRole, onClose, onConfi
           <span><ShieldCheck size={19} /><span><strong>{department.name} 부서 관리자로 임명</strong><small>이 부서와 하위 부서의 구성원을 관리합니다.</small></span></span>
           <i className={isDepartmentManager ? 'is-on' : ''}><b /></i>
         </button>
-        <div className="member-manager-scope"><strong>부서 관리자 권한</strong><span>부서 이동 · 직위 설정 · 부서 대상 예배 및 공지 작성</span><small>교회 설정과 공동체 강퇴에는 접근할 수 없어요.</small></div>
+        <div className="member-manager-scope"><strong>부서 관리자 권한</strong><span>부서 이동 · 직위 설정 · 부서 대상 예배 및 공지 작성</span><small>공동체 설정과 구성원 강퇴에는 접근할 수 없어요.</small></div>
         <button className="admin-sheet-confirm" type="button" disabled={!title.trim()} onClick={() => dismiss(() => onConfirm({ title: title.trim() || defaultTitle, isDepartmentManager, departmentId: department.id }))}>변경 내용 확인</button>
       </section>
     </div>
@@ -7119,7 +7262,7 @@ function MessageView({ conversations, setConversations, qtRooms, setQtRooms, fri
 
   return (
     <div className="message-layout">
-      <section className="message-directory" aria-label="교회 메시지">
+      <section className="message-directory" aria-label="공동체 메시지">
         <div className="message-directory-toolbar">
           <div className="message-view-switch" role="tablist" aria-label="메시지 목록 구분">
             <button
@@ -7552,7 +7695,7 @@ function MemberProfileSheet({ member, onClose, onMessage, currentChurchId, selec
         </blockquote>
         <dl className="member-profile-meta">
           {isDifferentChurch
-            ? <div className="is-church-only"><dt>교회</dt><dd>{memberChurchName}</dd></div>
+            ? <div className="is-church-only"><dt>공동체</dt><dd>{memberChurchName}</dd></div>
             : <><div><dt>부서</dt><dd>{member.department}</dd></div><div><dt>직책</dt><dd>{member.role}</dd></div></>}
         </dl>
         {onMessage && (
@@ -8694,6 +8837,7 @@ function ProfileView({
   readingGrowthData,
   onRestartReading,
   currentChurch,
+  communities,
   onSaveProfile,
 }) {
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
@@ -8743,6 +8887,7 @@ function ProfileView({
           profile={personalProfile}
           selectedTranslation={selectedTranslation}
           achievements={achievements}
+          communities={communities}
           onClose={() => setProfileEditorOpen(false)}
           onSave={(nextProfile) => {
             void (onSaveProfile ? onSaveProfile(nextProfile) : Promise.resolve(setPersonalProfile(nextProfile)));
@@ -8885,7 +9030,7 @@ function PersonalAvatar({ profile, className = 'avatar' }) {
   );
 }
 
-function SelfProfileEditor({ profile, selectedTranslation, achievements, onClose, onSave }) {
+function SelfProfileEditor({ profile, selectedTranslation, achievements, communities, onClose, onSave }) {
   const [draft, setDraft] = useState(profile);
   const [uploadError, setUploadError] = useState('');
   const [versePickerOpen, setVersePickerOpen] = useState(false);
@@ -8959,6 +9104,25 @@ function SelfProfileEditor({ profile, selectedTranslation, achievements, onClose
             <span><strong>{draft.verseRef}</strong><small><RepresentativeVerseText reference={draft.verseRef} fallbackText={draft.representativeVerse} translationId={selectedTranslation} /></small></span>
             <ChevronRight size={18} aria-hidden="true" />
           </button>
+          <fieldset className="profile-community-picker">
+            <legend>대표 공동체 <small>프로필에 표시돼요</small></legend>
+            <div>
+              <button
+                className={!draft.primaryCommunityId ? 'is-selected' : ''}
+                type="button"
+                onClick={() => setDraft((current) => ({ ...current, primaryCommunityId: '' }))}
+              >표시 안 함</button>
+              {communities.map((community) => (
+                <button
+                  className={draft.primaryCommunityId === community.id ? 'is-selected' : ''}
+                  type="button"
+                  key={community.id}
+                  onClick={() => setDraft((current) => ({ ...current, primaryCommunityId: community.id }))}
+                >{community.name}<small>{getCommunityTypeLabel(community)}</small></button>
+              ))}
+            </div>
+            {!communities.length && <small>가입한 공동체가 아직 없어요.</small>}
+          </fieldset>
           <fieldset className="profile-achievement-picker">
             <legend>프로필에 표시할 업적</legend>
             <div>
@@ -9238,7 +9402,7 @@ async function bootstrapApplication() {
   initializePersistenceScope(userId);
   if (shouldAskToImportGuestData(userId)) {
     const shouldImport = window.confirm(
-      '이 기기에서 로그인 전에 만든 개인 기록이 있어요. 메모, 읽음 기록, 강조와 개인 설정을 이 계정으로 가져올까요?\n\n기존 교회, 친구, 대화와 권한 데이터는 가져오지 않습니다.'
+      '이 기기에서 로그인 전에 만든 개인 기록이 있어요. 메모, 읽음 기록, 강조와 개인 설정을 이 계정으로 가져올까요?\n\n기존 공동체, 친구, 대화와 권한 데이터는 가져오지 않습니다.'
     );
     if (shouldImport) importGuestAccountData(userId);
     else keepGuestAccountDataSeparate(userId);

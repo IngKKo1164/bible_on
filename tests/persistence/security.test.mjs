@@ -19,6 +19,14 @@ test('Plus entitlement is readable by its owner but not client-writable', async 
   assert.doesNotMatch(sql, /grant\s+(insert|update|delete|all)[^;]*user_subscriptions[^;]*authenticated/i);
 });
 
+test('community memberships are capped and representative community must be active', async () => {
+  const sql = await readFile(new URL('../../supabase/migrations/20260905013000_community_model.sql', import.meta.url), 'utf8');
+  assert.match(sql, /community_kind in \('church', 'club', 'small_group', 'community'\)/i);
+  assert.match(sql, /if active_count >= 3 then/i);
+  assert.match(sql, /primary community must be an active membership/i);
+  assert.match(sql, /create trigger church_memberships_active_limit/i);
+});
+
 test('forged Storage paths are rejected before upload', () => {
   assert.equal(validateStorageObjectPath({
     bucket: 'avatars',

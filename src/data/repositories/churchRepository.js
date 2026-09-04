@@ -9,6 +9,7 @@ function mapProfile(row) {
     avatarPath: row.avatar_path ?? '',
     verseRef: row.representative_verse_ref ?? '',
     representativeVerse: row.representative_verse_text ?? '',
+    primaryCommunityId: row.primary_community_id ?? '',
   } : null;
 }
 
@@ -19,6 +20,7 @@ function mapChurch(row) {
     profileImagePath: row.profile_image_path ?? '',
     verseRef: row.representative_verse_ref ?? '',
     representativeVerse: row.representative_verse_text ?? '',
+    communityType: row.community_kind ?? 'community',
     autoJoin: row.auto_join,
     active: row.active,
   } : null;
@@ -42,9 +44,14 @@ export const churchRepository = {
       .eq('user_id', user.id).in('status', ['active', 'pending']).order('joined_at', { ascending: false });
     const memberships = throwIfError(membershipResult);
     const activeMemberships = memberships.filter(({ status }) => status === 'active');
+    const activeCommunityIds = activeMemberships.map(({ church_id }) => church_id);
+    const communityResult = activeCommunityIds.length
+      ? await client.from('churches').select('*').in('id', activeCommunityIds)
+      : { data: [], error: null };
+    const communities = throwIfError(communityResult).map(mapChurch);
     const membership = activeMemberships.find(({ church_id }) => church_id === preferredChurchId)
       ?? activeMemberships[0] ?? null;
-    if (!membership) return { church: null, membership: null, pendingMemberships: memberships, departments: [], members: [], announcements: [], worshipServices: [] };
+    if (!membership) return { church: null, communities, membership: null, pendingMemberships: memberships, departments: [], members: [], announcements: [], worshipServices: [] };
 
     const churchId = membership.church_id;
     const [church, departments, memberRows, assignments, managers, announcements, worship] = await Promise.all([
@@ -67,6 +74,7 @@ export const churchRepository = {
     managers.data.forEach((row) => managerDepartments.set(row.user_id, [...(managerDepartments.get(row.user_id) ?? []), row.department_id]));
     return {
       church: mapChurch(church.data),
+      communities,
       membership,
       pendingMemberships: memberships.filter(({ status }) => status === 'pending'),
       departments: departments.data.map((row) => ({ ...row, parentId: row.parent_id, churchId: row.church_id })),
@@ -83,10 +91,12 @@ export const churchRepository = {
     };
   },
 
-  async create(name) {
+  async create(name, communityType = 'community') {
     const { client } = await getAuthenticatedContext();
     return throwIfError(await client.rpc('create_church', {
-      church_name: name.trim(), normalized_church_name: name.trim().toLowerCase(),
+      church_name: name.trim(),
+      normalized_church_name: name.trim().toLowerCase(),
+      community_kind_input: communityType,
     }));
   },
 
