@@ -4083,7 +4083,9 @@ function MemoEditorScreen({ target, comments, onAdd, onUpdate, onClose }) {
     target.includeRelated && target.verseIds.length === 1
       ? comment.verseIds.includes(target.verseIds[0])
       : comment.threadKey === target.threadKey
-  )).sort((left, right) => left.createdAt - right.createdAt), [comments, target]);
+  )).sort((left, right) => (
+    (right.updatedAt - left.updatedAt) || (right.createdAt - left.createdAt)
+  )), [comments, target]);
   const [composer, setComposer] = useState(() => visibleComments.length === 0 ? { target, parentId: null } : null);
   const [editingId, setEditingId] = useState('');
   const [draft, setDraft] = useState('');
@@ -9343,6 +9345,44 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
     );
   };
 
+  const getMessageSenderProfile = (message) => {
+    if (message.from === 'me' || message.from === 'system') return null;
+    if (message.from !== 'them') {
+      const matchedById = members.find(({ id }) => id === message.from);
+      if (matchedById) return matchedById;
+    }
+    if (message.author) {
+      const matchedByName = members.find(({ name }) => name === message.author);
+      if (matchedByName) return matchedByName;
+    }
+    return participants.length === 1 ? participants[0] : null;
+  };
+
+  const renderMessageSenderAvatar = (message) => {
+    const sender = getMessageSenderProfile(message);
+    if (!sender) return null;
+    return (
+      <button
+        className="message-sender-avatar"
+        type="button"
+        aria-label={`${sender.name} 프로필 보기`}
+        onPointerDown={(event) => {
+          event.stopPropagation();
+          cancelReactionHold();
+        }}
+        onPointerUp={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          setSelectedParticipantProfile(sender);
+        }}
+      >
+        {sender.avatarImage
+          ? <img src={sender.avatarImage} alt="" />
+          : <UserRound className="default-profile-glyph" aria-hidden="true" />}
+      </button>
+    );
+  };
+
   return (
     <section
       className={`message-room-screen ${swipeBack.className}`}
@@ -9426,16 +9466,17 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
               <div className={`message-bubble-block is-special ${message.from === 'me' ? 'is-me' : 'is-them'}`} data-message-id={message.id} key={message.id}>
                 {renderMessageActionMenu(message)}
                 <div className={`message-special-content-row ${message.from === 'me' ? 'is-me' : 'is-them'}`}>
-                  <button
+                  {renderMessageSenderAvatar(message)}
+                  <article
                     className="message-bible-passage"
-                    type="button"
+                    tabIndex="0"
+                    aria-label={`${message.referenceLabel ?? firstPassage.reference} 전달 말씀`}
                     onPointerDown={() => startReactionHold(message.id)}
                     onPointerUp={cancelReactionHold}
                     onPointerCancel={cancelReactionHold}
                     onPointerLeave={cancelReactionHold}
                     onContextMenu={(event) => event.preventDefault()}
                     onKeyDown={(event) => openMessageMenusFromKeyboard(event, message.id)}
-                    onClick={() => { if (reactionMenu?.messageId !== message.id) onOpenBibleVerse?.(firstPassage); }}
                   >
                     <span><BookOpen size={15} aria-hidden="true" />말씀</span>
                     <strong>{message.referenceLabel ?? firstPassage.reference}</strong>
@@ -9443,7 +9484,21 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
                       {message.passages.map((passage) => <p key={passage.reference}><b>{passage.reference}</b>{passage.text}</p>)}
                     </div>
                     <footer><small>{firstPassage.translationName}</small></footer>
-                  </button>
+                    <button
+                      className="message-passage-open-button"
+                      type="button"
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                        cancelReactionHold();
+                      }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOpenBibleVerse?.(firstPassage);
+                      }}
+                    >
+                      지금 읽으러 가기<ChevronRight size={16} aria-hidden="true" />
+                    </button>
+                  </article>
                   <span className="message-bubble-meta">
                     {message.unreadByCount > 0 && <b aria-label={`대화 참여자 ${message.unreadByCount}명이 읽지 않음`}>{message.unreadByCount}</b>}
                     <time>{message.time}</time>
@@ -9518,6 +9573,7 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
                 tabIndex="0"
                 onKeyDown={(event) => openMessageMenusFromKeyboard(event, message.id)}
               >
+                {renderMessageSenderAvatar(message)}
                 <div className="message-bubble-content">
                   {message.replyTo && (
                     <span className="message-reply-reference">

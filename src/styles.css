@@ -13173,6 +13173,7 @@ button.list-row:active,
   padding: 4px 0 0;
 }
 
+.message-passage-open-button,
 .message-qt-open-button {
   align-items: center;
   background: var(--accent-deep);
@@ -13190,8 +13191,61 @@ button.list-row:active,
   width: 100%;
 }
 
+.message-passage-open-button:active,
 .message-qt-open-button:active {
   filter: brightness(0.92);
+}
+
+.message-bible-passage,
+.message-qt-passage {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent-pale) 42%, var(--surface)) 0%,
+      color-mix(in srgb, var(--accent-pale) 18%, var(--surface)) 46%,
+      var(--surface) 100%
+    );
+  border: 1px solid color-mix(in srgb, var(--accent-deep) 14%, var(--divider));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--accent-pale) 50%, transparent),
+    0 4px 14px rgb(25 31 40 / 7%);
+}
+
+.message-sender-avatar {
+  align-items: center;
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--accent-pale) 54%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent-deep) 12%, var(--divider));
+  border-radius: 50%;
+  color: var(--accent-deep);
+  display: inline-flex;
+  flex: 0 0 32px;
+  height: 32px;
+  justify-content: center;
+  margin-bottom: 1px;
+  overflow: hidden;
+  padding: 0;
+  width: 32px;
+}
+
+.message-sender-avatar img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.message-sender-avatar .default-profile-glyph {
+  height: 18px;
+  width: 18px;
+}
+
+.message-sender-avatar:active {
+  transform: scale(0.94);
+}
+
+.message-special-content-row.is-them .message-sender-avatar + .message-bible-passage {
+  flex-basis: auto;
+  max-width: min(calc(100% - 78px), 350px);
 }
 
 @media (prefers-reduced-motion: reduce) {
