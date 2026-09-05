@@ -42,6 +42,7 @@
     sans-serif;
   color: var(--ink);
   background: var(--bg);
+  color-scheme: light;
   font-synthesis: none;
   line-height: 1.45;
   text-rendering: optimizeLegibility;
@@ -6000,13 +6001,14 @@ button.list-row:active,
   background: transparent;
 }
 
+.calendar-week > span.level-0,
+.calendar-legend i.level-0 { background: color-mix(in srgb, var(--accent-deep) 20%, transparent); }
 .calendar-week > span.level-1,
-.calendar-legend i.level-1 { background: color-mix(in srgb, var(--accent-soft) 72%, var(--accent) 28%); }
+.calendar-legend i.level-1 { background: color-mix(in srgb, var(--accent-deep) 45%, transparent); }
 .calendar-week > span.level-2,
-.calendar-legend i.level-2 { background: var(--accent); }
+.calendar-legend i.level-2 { background: color-mix(in srgb, var(--accent-deep) 80%, transparent); }
 .calendar-week > span.level-3,
 .calendar-legend i.level-3 { background: var(--accent-deep); }
-.calendar-legend i.level-0 { background: var(--surface-pressed); }
 
 .calendar-week > span.level-2,
 .calendar-week > span.level-3 {
@@ -12252,16 +12254,6 @@ button.list-row:active,
   12% { opacity: 1; }
   100% { opacity: 0; transform: translate(var(--confetti-drift), -68vh) rotate(620deg) scale(1); }
 }
-
-/* Dark heatmap colors share one hue and differ only by opacity. */
-:root[data-theme='dark'] .calendar-week > span.level-0,
-:root[data-theme='dark'] .calendar-legend i.level-0 { background: rgb(145 133 219 / 20%); }
-:root[data-theme='dark'] .calendar-week > span.level-1,
-:root[data-theme='dark'] .calendar-legend i.level-1 { background: rgb(145 133 219 / 45%); }
-:root[data-theme='dark'] .calendar-week > span.level-2,
-:root[data-theme='dark'] .calendar-legend i.level-2 { background: rgb(145 133 219 / 80%); }
-:root[data-theme='dark'] .calendar-week > span.level-3,
-:root[data-theme='dark'] .calendar-legend i.level-3 { background: rgb(145 133 219); }
 
 :root[data-theme='dark'] .calendar-week > span.level-0,
 :root[data-theme='dark'] .calendar-week > span.level-1 {
