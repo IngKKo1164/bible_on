@@ -7,6 +7,7 @@ import {
   getDepartmentMemberIds,
   getDepartmentSubtreeIds,
   getMemberDepartmentNode,
+  isCurrentCommunityWorkspace,
 } from '../../src/data/communityHierarchy.js';
 
 const departments = [
@@ -15,6 +16,13 @@ const departments = [
   { id: 'media', parentId: 'youth', name: '미디어팀', memberIds: ['b', 'c'] },
   { id: 'adult', parentId: 'root', name: '장년부', memberIds: ['d'] },
 ];
+
+test('missing community ids never match an empty server workspace', () => {
+  assert.equal(isCurrentCommunityWorkspace('', undefined), false);
+  assert.equal(isCurrentCommunityWorkspace(undefined, undefined), false);
+  assert.equal(isCurrentCommunityWorkspace('community-a', 'community-a'), true);
+  assert.equal(isCurrentCommunityWorkspace('community-a', 'community-b'), false);
+});
 
 test('department counts include descendants without counting a member twice', () => {
   assert.deepEqual(getDepartmentMemberIds(departments, 'root').sort(), ['a', 'admin', 'b', 'c', 'd']);

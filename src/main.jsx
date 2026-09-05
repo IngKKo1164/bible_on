@@ -91,6 +91,7 @@ import {
   getDepartmentMemberIds,
   getDepartmentSubtreeIds,
   getMemberDepartmentNode,
+  isCurrentCommunityWorkspace,
 } from './data/communityHierarchy';
 import {
   importGuestAccountData,
@@ -788,7 +789,10 @@ function createCommunityDepartmentDefaults(community) {
 }
 
 function buildCommunityDepartmentNodes(community, serverWorkspace) {
-  const hasCurrentServerWorkspace = serverWorkspace?.church?.id === community?.id;
+  const hasCurrentServerWorkspace = isCurrentCommunityWorkspace(
+    community?.id,
+    serverWorkspace?.church?.id
+  );
   if (!hasCurrentServerWorkspace) return createCommunityDepartmentDefaults(community);
 
   const membersByDepartment = new Map();
@@ -5666,7 +5670,10 @@ function ChurchView({
     ];
   });
   const activeQtRoom = qtRooms.find(({ id }) => id === activeQtRoomId);
-  const hasCurrentServerWorkspace = serverChurchWorkspace?.church?.id === currentChurchId;
+  const hasCurrentServerWorkspace = isCurrentCommunityWorkspace(
+    currentChurchId,
+    serverChurchWorkspace?.church?.id
+  );
   const resolvedAuthority = churchAccess?.authority
     ?? (currentChurchId === SAMPLE_COMMUNITY_ID ? churchInfo.authority : '성도');
   const currentAuthority = serverBacked && !hasCurrentServerWorkspace ? '성도' : resolvedAuthority;
@@ -6430,7 +6437,10 @@ function ChurchAdminRegistrationSheet({ onClose, onCreate }) {
 function ChurchDepartmentDirectorySheet({ community, serverWorkspace, onClose }) {
   const [expandedDepartmentId, setExpandedDepartmentId] = useState('');
   const { isClosing, dismiss } = useSlideDismiss(onClose);
-  const hasCurrentServerWorkspace = serverWorkspace?.church?.id === community?.id;
+  const hasCurrentServerWorkspace = isCurrentCommunityWorkspace(
+    community?.id,
+    serverWorkspace?.church?.id
+  );
   const departmentNodes = useMemo(() => {
     const serverNodes = buildCommunityDepartmentNodes(community, serverWorkspace);
     return hasCurrentServerWorkspace
@@ -6513,7 +6523,10 @@ function ChurchManagementScreen({
   onDelegateChurchAdmin,
   onClose,
 }) {
-  const hasCurrentServerWorkspace = serverWorkspace?.church?.id === currentCommunityId;
+  const hasCurrentServerWorkspace = isCurrentCommunityWorkspace(
+    currentCommunityId,
+    serverWorkspace?.church?.id
+  );
   const [mode, setMode] = useState('departments');
   const [departmentNodes, setDepartmentNodes] = useState(() => {
     const serverNodes = buildCommunityDepartmentNodes(churchProfile, serverWorkspace);

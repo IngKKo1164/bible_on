@@ -1,3 +1,7 @@
+export function isCurrentCommunityWorkspace(communityId, workspaceCommunityId) {
+  return Boolean(communityId && workspaceCommunityId && communityId === workspaceCommunityId);
+}
+
 export function getDepartmentDepth(nodes, nodeId) {
   let depth = 0;
   let current = nodes.find(({ id }) => id === nodeId);
