@@ -7925,7 +7925,9 @@ function MessageView({ conversations, setConversations, qtRooms, setQtRooms, fri
                 <ChevronRight size={18} aria-hidden="true" />
               </button>
             ))}
-            {filteredDirectoryMembers.length === 0 && <p className="message-empty">검색 결과가 없어요.</p>}
+            {filteredDirectoryMembers.length === 0 && (
+              <p className="message-empty">{normalizedQuery ? '검색 결과가 없어요.' : '등록된 친구가 없어요.'}</p>
+            )}
           </div>
         ) : (
           <div className="qt-room-list">
