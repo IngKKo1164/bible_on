@@ -2,10 +2,14 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   Award,
   AudioLines,
   Bell,
   BellOff,
+  Bold,
   Bookmark,
   Camera,
   Check,
@@ -27,6 +31,7 @@ import {
   Heart,
   Home,
   Image as ImageIcon,
+  Italic,
   List,
   LogOut,
   Menu,
@@ -51,9 +56,11 @@ import {
   ShieldCheck,
   Sparkles,
   Star,
+  Strikethrough,
   ThumbsUp,
   Trash2,
   Trophy,
+  Type,
   Underline,
   Undo2,
   UserMinus,
@@ -170,6 +177,91 @@ function createMemoId(prefix = 'memo') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function escapeMemoText(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function memoPlainTextToHtml(value) {
+  const lines = String(value ?? '').split('\n');
+  return lines.map((line) => `<div>${line ? escapeMemoText(line) : '<br>'}</div>`).join('');
+}
+
+function isSafeMemoColor(value) {
+  const normalized = String(value ?? '').trim();
+  if (!normalized || /[;{}]|url\(|var\(/i.test(normalized)) return false;
+  return /^#[0-9a-f]{3,8}$/i.test(normalized)
+    || /^(?:rgb|rgba|hsl|hsla)\([\d\s.,%+-]+\)$/i.test(normalized);
+}
+
+function sanitizeMemoHtml(value) {
+  const source = String(value ?? '');
+  if (!source.trim()) return '';
+  if (typeof document === 'undefined') return memoPlainTextToHtml(source.replace(/<[^>]*>/g, ''));
+
+  const template = document.createElement('template');
+  template.innerHTML = source;
+  const output = document.createElement('div');
+  const allowedTags = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'DEL', 'BR', 'DIV', 'P', 'SPAN', 'FONT']);
+  const fontSizes = { 1: '11px', 2: '13px', 3: '15px', 4: '18px', 5: '22px', 6: '27px', 7: '32px' };
+  const keywordFontSizes = {
+    'xx-small': '11px',
+    'x-small': '12px',
+    small: '13px',
+    medium: '15px',
+    large: '18px',
+    'x-large': '22px',
+    'xx-large': '27px',
+    'xxx-large': '32px',
+  };
+
+  const appendSanitized = (sourceNode, parentNode) => {
+    if (sourceNode.nodeType === Node.TEXT_NODE) {
+      parentNode.appendChild(document.createTextNode(sourceNode.textContent ?? ''));
+      return;
+    }
+    if (sourceNode.nodeType !== Node.ELEMENT_NODE) return;
+
+    const tagName = sourceNode.tagName.toUpperCase();
+    if (!allowedTags.has(tagName)) {
+      Array.from(sourceNode.childNodes).forEach((child) => appendSanitized(child, parentNode));
+      return;
+    }
+
+    const normalizedTag = tagName === 'FONT' ? 'SPAN' : tagName === 'STRIKE' ? 'S' : tagName;
+    const cleanNode = document.createElement(normalizedTag.toLowerCase());
+    const sourceStyle = sourceNode.style;
+    const textColor = sourceNode.getAttribute('color') || sourceStyle.color;
+    const backgroundColor = sourceStyle.backgroundColor;
+    const align = sourceNode.getAttribute('align') || sourceStyle.textAlign;
+    const fontSizeAttribute = Number(sourceNode.getAttribute('size'));
+    const inlineFontSize = Number.parseFloat(sourceStyle.fontSize);
+
+    if (isSafeMemoColor(textColor)) cleanNode.style.color = textColor;
+    if (isSafeMemoColor(backgroundColor)) cleanNode.style.backgroundColor = backgroundColor;
+    if (['left', 'center', 'right'].includes(align)) cleanNode.style.textAlign = align;
+    if (fontSizes[fontSizeAttribute]) cleanNode.style.fontSize = fontSizes[fontSizeAttribute];
+    else if (keywordFontSizes[sourceStyle.fontSize]) cleanNode.style.fontSize = keywordFontSizes[sourceStyle.fontSize];
+    else if (Number.isFinite(inlineFontSize)) cleanNode.style.fontSize = `${Math.min(32, Math.max(11, inlineFontSize))}px`;
+    if (['bold', '700', '800', '900'].includes(sourceStyle.fontWeight)) cleanNode.style.fontWeight = '700';
+    if (sourceStyle.fontStyle === 'italic') cleanNode.style.fontStyle = 'italic';
+    if (sourceStyle.textDecorationLine.includes('underline')) cleanNode.style.textDecorationLine = 'underline';
+    if (sourceStyle.textDecorationLine.includes('line-through')) {
+      cleanNode.style.textDecorationLine = `${cleanNode.style.textDecorationLine} line-through`.trim();
+    }
+
+    Array.from(sourceNode.childNodes).forEach((child) => appendSanitized(child, cleanNode));
+    parentNode.appendChild(cleanNode);
+  };
+
+  Array.from(template.content.childNodes).forEach((child) => appendSanitized(child, output));
+  return output.innerHTML;
+}
+
 function toMemoVerseSnapshot(verse) {
   const idMatch = String(verse?.id ?? '').match(/^(.+)-(\d+)-(.+)$/);
   const bookId = verse?.bookId ?? idMatch?.[1] ?? '';
@@ -224,6 +316,7 @@ function normalizeMemoComments(stored, legacyNotes = {}, legacyMeta = {}, hasSto
         verseIds: target.verseIds,
         verses: target.verses,
         body: String(entry.body ?? entry.note ?? ''),
+        bodyHtml: String(entry.bodyHtml ?? ''),
         parentId: entry.parentId ?? null,
         createdAt: Number(entry.createdAt ?? index),
         updatedAt: Number(entry.updatedAt ?? entry.createdAt ?? index),
@@ -239,6 +332,7 @@ function normalizeMemoComments(stored, legacyNotes = {}, legacyMeta = {}, hasSto
       id: `legacy-${id}`,
       ...target,
       body: String(body ?? ''),
+      bodyHtml: '',
       parentId: null,
       createdAt: Number(metadata.createdAt ?? insertionIndex),
       updatedAt: Number(metadata.updatedAt ?? insertionIndex),
@@ -277,6 +371,7 @@ function normalizeWorshipMemoEntries(value = {}) {
     return value.entries.map((entry, index) => ({
       id: entry.id ?? `worship-memo-${index}`,
       body: String(entry.body ?? entry.memo ?? ''),
+      bodyHtml: String(entry.bodyHtml ?? ''),
       parentId: entry.parentId ?? null,
       createdAt: Number(entry.createdAt ?? index),
       updatedAt: Number(entry.updatedAt ?? entry.createdAt ?? index),
@@ -287,6 +382,7 @@ function normalizeWorshipMemoEntries(value = {}) {
   return [{
     id: `legacy-worship-${timestamp}`,
     body: String(value.memo),
+    bodyHtml: '',
     parentId: null,
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -2051,7 +2147,7 @@ function App() {
     }));
   };
 
-  const addMemoComment = ({ target, body, parentId = null }) => {
+  const addMemoComment = ({ target, body, bodyHtml = '', parentId = null }) => {
     const trimmedBody = String(body ?? '').trim();
     if (!trimmedBody || !target?.verseIds?.length) return;
     const timestamp = Date.now();
@@ -2062,18 +2158,26 @@ function App() {
       verseIds: [...target.verseIds],
       verses: target.verses.map(toMemoVerseSnapshot),
       body: trimmedBody,
+      bodyHtml: sanitizeMemoHtml(bodyHtml || memoPlainTextToHtml(trimmedBody)),
       parentId,
       createdAt: timestamp,
       updatedAt: timestamp,
     }]);
   };
 
-  const updateMemoComment = (commentId, body) => {
+  const updateMemoComment = (commentId, content) => {
+    const body = typeof content === 'object' ? content.body : content;
+    const bodyHtml = typeof content === 'object' ? content.bodyHtml : '';
     const trimmedBody = String(body ?? '').trim();
     if (!trimmedBody) return;
     setMemoComments((current) => current.map((comment) => (
       comment.id === commentId
-        ? { ...comment, body: trimmedBody, updatedAt: Date.now() }
+        ? {
+          ...comment,
+          body: trimmedBody,
+          bodyHtml: sanitizeMemoHtml(bodyHtml || memoPlainTextToHtml(trimmedBody)),
+          updatedAt: Date.now(),
+        }
         : comment
     )));
   };
@@ -4078,6 +4182,266 @@ function HomeView({
   );
 }
 
+function MemoFormattedText({ body, bodyHtml, className = '' }) {
+  const safeHtml = sanitizeMemoHtml(bodyHtml || memoPlainTextToHtml(body));
+  return (
+    <div
+      className={`memo-formatted-text ${className}`.trim()}
+      dangerouslySetInnerHTML={{ __html: safeHtml }}
+    />
+  );
+}
+
+function RichMemoEditor({ body, bodyHtml, contentKey, onChange, ariaLabel, placeholder }) {
+  const editorRef = useRef(null);
+  const savedRangeRef = useRef(null);
+  const initializedKeyRef = useRef('');
+  const [textColor, setTextColor] = useState('#4f465f');
+  const [backgroundColor, setBackgroundColor] = useState('#eee9ff');
+  const [formatState, setFormatState] = useState({
+    bold: false,
+    italic: false,
+    underline: false,
+    strikeThrough: false,
+    justifyLeft: true,
+    justifyCenter: false,
+    justifyRight: false,
+  });
+
+  const rangeIsInsideEditor = (range) => {
+    const editor = editorRef.current;
+    return Boolean(editor && range && editor.contains(range.commonAncestorContainer));
+  };
+
+  const refreshFormatState = () => {
+    if (!savedRangeRef.current) return;
+    setFormatState({
+      bold: document.queryCommandState('bold'),
+      italic: document.queryCommandState('italic'),
+      underline: document.queryCommandState('underline'),
+      strikeThrough: document.queryCommandState('strikeThrough'),
+      justifyLeft: document.queryCommandState('justifyLeft'),
+      justifyCenter: document.queryCommandState('justifyCenter'),
+      justifyRight: document.queryCommandState('justifyRight'),
+    });
+  };
+
+  const rememberSelection = () => {
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    if (!rangeIsInsideEditor(range)) return;
+    savedRangeRef.current = range.cloneRange();
+    refreshFormatState();
+  };
+
+  const restoreSelection = () => {
+    const editor = editorRef.current;
+    if (!editor) return null;
+    editor.focus({ preventScroll: true });
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    const savedRange = savedRangeRef.current;
+    if (rangeIsInsideEditor(savedRange)) selection.addRange(savedRange);
+    else {
+      const fallback = document.createRange();
+      fallback.selectNodeContents(editor);
+      fallback.collapse(false);
+      selection.addRange(fallback);
+    }
+    return selection.rangeCount ? selection.getRangeAt(0) : null;
+  };
+
+  const getCurrentLine = (range) => {
+    const editor = editorRef.current;
+    let node = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    while (node && node !== editor) {
+      if (node.tagName === 'DIV' || node.tagName === 'P') return node;
+      node = node.parentElement;
+    }
+    return editor;
+  };
+
+  const getTextOffset = (container, range) => {
+    const prefix = document.createRange();
+    prefix.selectNodeContents(container);
+    prefix.setEnd(range.startContainer, range.startOffset);
+    return prefix.toString().length;
+  };
+
+  const restoreCaretAtOffset = (container, offset) => {
+    const editor = editorRef.current;
+    const target = container?.isConnected ? container : editor;
+    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+    let remaining = offset;
+    let textNode = walker.nextNode();
+    while (textNode) {
+      if (remaining <= textNode.textContent.length) {
+        const range = document.createRange();
+        range.setStart(textNode, remaining);
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        savedRangeRef.current = range.cloneRange();
+        return;
+      }
+      remaining -= textNode.textContent.length;
+      textNode = walker.nextNode();
+    }
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    savedRangeRef.current = range.cloneRange();
+  };
+
+  const emitContent = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    onChange({
+      body: editor.innerText.replace(/\n$/, ''),
+      bodyHtml: sanitizeMemoHtml(editor.innerHTML),
+    });
+  };
+
+  const applyInlineCommand = (command, value = null) => {
+    const range = restoreSelection();
+    if (!range) return;
+    const appliesToLine = range.collapsed;
+    const line = appliesToLine ? getCurrentLine(range) : null;
+    const caretOffset = appliesToLine ? getTextOffset(line, range) : 0;
+    if (appliesToLine) range.selectNodeContents(line);
+    document.execCommand('styleWithCSS', false, true);
+    document.execCommand(command, false, value);
+    emitContent();
+    if (appliesToLine) restoreCaretAtOffset(line, caretOffset);
+    else rememberSelection();
+    refreshFormatState();
+  };
+
+  const applyAlignment = (command) => {
+    if (!restoreSelection()) return;
+    document.execCommand(command, false, null);
+    emitContent();
+    rememberSelection();
+  };
+
+  const changeFontSize = (direction) => {
+    const range = restoreSelection();
+    if (!range) return;
+    const sizeSteps = [11, 13, 15, 18, 22, 27, 32];
+    const anchor = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    const currentPixels = Number.parseFloat(window.getComputedStyle(anchor).fontSize) || 15;
+    const currentIndex = sizeSteps.reduce((closest, size, index) => (
+      Math.abs(size - currentPixels) < Math.abs(sizeSteps[closest] - currentPixels) ? index : closest
+    ), 0);
+    const nextIndex = Math.min(sizeSteps.length - 1, Math.max(0, currentIndex + direction));
+    applyInlineCommand('fontSize', String(nextIndex + 1));
+  };
+
+  const ensureEditableLine = () => {
+    const editor = editorRef.current;
+    if (!editor || editor.innerHTML) {
+      rememberSelection();
+      return;
+    }
+    editor.innerHTML = '<div><br></div>';
+    const range = document.createRange();
+    range.selectNodeContents(editor.firstElementChild);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    savedRangeRef.current = range.cloneRange();
+  };
+
+  const toolbarButton = (command, label, Icon, pressed = false) => (
+    <button
+      className={pressed ? 'is-active' : ''}
+      type="button"
+      aria-label={label}
+      title={label}
+      aria-pressed={pressed}
+      onPointerDown={(event) => event.preventDefault()}
+      onClick={() => applyInlineCommand(command)}
+    >
+      <Icon size={17} aria-hidden="true" />
+    </button>
+  );
+
+  useLayoutEffect(() => {
+    if (!editorRef.current || initializedKeyRef.current === contentKey) return;
+    editorRef.current.innerHTML = bodyHtml || body
+      ? sanitizeMemoHtml(bodyHtml || memoPlainTextToHtml(body))
+      : '';
+    initializedKeyRef.current = contentKey;
+    savedRangeRef.current = null;
+  }, [body, bodyHtml, contentKey]);
+
+  useEffect(() => {
+    const updateSelection = () => rememberSelection();
+    document.addEventListener('selectionchange', updateSelection);
+    return () => document.removeEventListener('selectionchange', updateSelection);
+  }, []);
+
+  return (
+    <div className="rich-memo-editor-shell">
+      <div className="rich-memo-toolbar" role="toolbar" aria-label="메모 글씨 서식">
+        <div className="rich-memo-toolbar-row">
+          {toolbarButton('bold', '굵게', Bold, formatState.bold)}
+          {toolbarButton('italic', '기울임', Italic, formatState.italic)}
+          {toolbarButton('underline', '밑줄', Underline, formatState.underline)}
+          {toolbarButton('strikeThrough', '취소선', Strikethrough, formatState.strikeThrough)}
+          <span className="rich-memo-toolbar-divider" aria-hidden="true" />
+          <button type="button" aria-label="글씨 더 크게" title="글씨 더 크게" onPointerDown={(event) => event.preventDefault()} onClick={() => changeFontSize(1)}><Type size={17} /><b>+</b></button>
+          <button type="button" aria-label="글씨 더 작게" title="글씨 더 작게" onPointerDown={(event) => event.preventDefault()} onClick={() => changeFontSize(-1)}><Type size={17} /><b>-</b></button>
+        </div>
+        <div className="rich-memo-toolbar-row">
+          <label className="rich-memo-color-control" aria-label="글씨 색깔" title="글씨 색깔">
+            <Palette size={17} aria-hidden="true" />
+            <i style={{ backgroundColor: textColor }} aria-hidden="true" />
+            <input type="color" value={textColor} onPointerDown={rememberSelection} onChange={(event) => { setTextColor(event.target.value); applyInlineCommand('foreColor', event.target.value); }} />
+          </label>
+          <label className="rich-memo-color-control" aria-label="글씨 배경 색깔" title="글씨 배경 색깔">
+            <Highlighter size={17} aria-hidden="true" />
+            <i style={{ backgroundColor }} aria-hidden="true" />
+            <input type="color" value={backgroundColor} onPointerDown={rememberSelection} onChange={(event) => { setBackgroundColor(event.target.value); applyInlineCommand('hiliteColor', event.target.value); }} />
+          </label>
+          <span className="rich-memo-toolbar-divider" aria-hidden="true" />
+          <button className={formatState.justifyLeft ? 'is-active' : ''} type="button" aria-label="좌측 정렬" title="좌측 정렬" onPointerDown={(event) => event.preventDefault()} onClick={() => applyAlignment('justifyLeft')}><AlignLeft size={17} /></button>
+          <button className={formatState.justifyCenter ? 'is-active' : ''} type="button" aria-label="중앙 정렬" title="중앙 정렬" onPointerDown={(event) => event.preventDefault()} onClick={() => applyAlignment('justifyCenter')}><AlignCenter size={17} /></button>
+          <button className={formatState.justifyRight ? 'is-active' : ''} type="button" aria-label="우측 정렬" title="우측 정렬" onPointerDown={(event) => event.preventDefault()} onClick={() => applyAlignment('justifyRight')}><AlignRight size={17} /></button>
+        </div>
+      </div>
+      <div
+        className="rich-memo-editor"
+        ref={editorRef}
+        contentEditable
+        suppressContentEditableWarning
+        role="textbox"
+        aria-label={ariaLabel}
+        aria-multiline="true"
+        data-placeholder={placeholder}
+        onFocus={ensureEditableLine}
+        onInput={() => { emitContent(); rememberSelection(); }}
+        onKeyUp={rememberSelection}
+        onPointerUp={rememberSelection}
+        onPaste={(event) => {
+          event.preventDefault();
+          document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));
+        }}
+      />
+    </div>
+  );
+}
+
 function MemoEditorScreen({ target, comments, onAdd, onUpdate, onClose }) {
   const visibleComments = useMemo(() => comments.filter((comment) => (
     target.includeRelated && target.verseIds.length === 1
@@ -4089,6 +4453,7 @@ function MemoEditorScreen({ target, comments, onAdd, onUpdate, onClose }) {
   const [composer, setComposer] = useState(() => visibleComments.length === 0 ? { target, parentId: null } : null);
   const [editingId, setEditingId] = useState('');
   const [draft, setDraft] = useState('');
+  const [draftHtml, setDraftHtml] = useState('');
   const [copyActionsOpen, setCopyActionsOpen] = useState(false);
   const [copyNotice, setCopyNotice] = useState('');
   const verseContextRef = useRef(null);
@@ -4104,6 +4469,7 @@ function MemoEditorScreen({ target, comments, onAdd, onUpdate, onClose }) {
     setComposer(visibleComments.length === 0 ? { target, parentId: null } : null);
     setEditingId('');
     setDraft('');
+    setDraftHtml('');
     setCopyActionsOpen(false);
     setCopyNotice('');
   }, [target.threadKey]);
@@ -4178,12 +4544,14 @@ function MemoEditorScreen({ target, comments, onAdd, onUpdate, onClose }) {
   const startNewMemo = () => {
     setEditingId('');
     setDraft('');
+    setDraftHtml('');
     setComposer({ target: createMemoTarget(target.verses, { reference: target.reference }), parentId: null });
   };
 
   const continueMemo = (comment) => {
     setEditingId('');
     setDraft('');
+    setDraftHtml('');
     setComposer({
       target: createMemoTarget(comment.verses, { reference: comment.reference }),
       parentId: comment.id,
@@ -4194,15 +4562,18 @@ function MemoEditorScreen({ target, comments, onAdd, onUpdate, onClose }) {
     setComposer(null);
     setEditingId(comment.id);
     setDraft(comment.body);
+    setDraftHtml(comment.bodyHtml || memoPlainTextToHtml(comment.body));
   };
 
   const saveDraft = () => {
     if (!draft.trim()) return;
-    if (editingId) onUpdate(editingId, draft);
-    else if (composer) onAdd({ target: composer.target, body: draft, parentId: composer.parentId });
+    const safeHtml = sanitizeMemoHtml(draftHtml || memoPlainTextToHtml(draft));
+    if (editingId) onUpdate(editingId, { body: draft, bodyHtml: safeHtml });
+    else if (composer) onAdd({ target: composer.target, body: draft, bodyHtml: safeHtml, parentId: composer.parentId });
     setEditingId('');
     setComposer(null);
     setDraft('');
+    setDraftHtml('');
   };
 
   return (
@@ -4250,7 +4621,7 @@ function MemoEditorScreen({ target, comments, onAdd, onUpdate, onClose }) {
                   <span>{isRelatedPassage ? comment.reference : '나의 메모'}</span>
                   <time>{new Date(comment.updatedAt).toLocaleDateString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric' })}</time>
                 </div>
-                <p>{comment.body}</p>
+                <MemoFormattedText body={comment.body} bodyHtml={comment.bodyHtml} />
                 <div className="memo-comment-actions">
                   <button type="button" onClick={() => editMemo(comment)}>수정</button>
                   <button type="button" onClick={() => continueMemo(comment)}>이어 적기</button>
@@ -4265,20 +4636,24 @@ function MemoEditorScreen({ target, comments, onAdd, onUpdate, onClose }) {
         {(composer || editingId) && (
           <section className="memo-composer">
             <span>{editingId ? '메모 수정' : composer?.parentId ? '이어서 적기' : '새 메모'}</span>
-            <textarea
-              autoFocus
-              className="memo-editor-textarea"
-              aria-label={`${composer?.target.reference ?? target.reference} 메모`}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
+            <RichMemoEditor
+              key={editingId || `new-${composer?.target.threadKey}-${composer?.parentId ?? 'root'}`}
+              contentKey={editingId || `new-${composer?.target.threadKey}-${composer?.parentId ?? 'root'}`}
+              body={draft}
+              bodyHtml={draftHtml}
+              ariaLabel={`${composer?.target.reference ?? target.reference} 메모`}
               placeholder="마음에 남은 생각을 적어보세요"
+              onChange={(content) => {
+                setDraft(content.body);
+                setDraftHtml(content.bodyHtml);
+              }}
             />
           </section>
         )}
       </div>
       <footer className="memo-editor-footer">
         {composer || editingId ? (
-          <><button className="is-secondary" type="button" onClick={() => { setComposer(null); setEditingId(''); setDraft(''); }}>취소</button><button type="button" disabled={!draft.trim()} onClick={saveDraft}>저장</button></>
+          <><button className="is-secondary" type="button" onClick={() => { setComposer(null); setEditingId(''); setDraft(''); setDraftHtml(''); }}>취소</button><button type="button" disabled={!draft.trim()} onClick={saveDraft}>저장</button></>
         ) : (
           <button type="button" onClick={startNewMemo}><NotebookPen size={17} aria-hidden="true" />새 메모 남기기</button>
         )}
@@ -4403,7 +4778,7 @@ function MemoLibraryScreen({ memoComments, onAddMemoComment, onUpdateMemoComment
             <strong>{memoType === 'bible' ? entry.reference : entry.worship.title}</strong>
             {memoType === 'bible' && entry.latest.verses.map(({ text }) => text).filter(Boolean).join(' ') && <span className="memo-library-verse">{entry.latest.verses.map(({ text }) => text).filter(Boolean).join(' ')}</span>}
             {memoType === 'worship' && entry.worship.serviceDate && <span className="memo-library-verse">{entry.worship.serviceDate}{entry.worship.coreVerse ? ` · ${entry.worship.coreVerse}` : ''}</span>}
-            <p>{entry.latest.body}</p>
+            <MemoFormattedText body={entry.latest.body} bodyHtml={entry.latest.bodyHtml} className="memo-library-preview" />
             {entry.commentCount > 1 && <small className="memo-library-comment-count">메모 {entry.commentCount}개</small>}
           </button>
         ))}
@@ -6444,6 +6819,7 @@ function WorshipMemoScreen({ worship, value, onChange, onClose }) {
   const [isListening, setIsListening] = useState(false);
   const [speechMessage, setSpeechMessage] = useState('');
   const [draft, setDraft] = useState('');
+  const [draftHtml, setDraftHtml] = useState('');
   const [replyTo, setReplyTo] = useState(null);
   const [editingEntryId, setEditingEntryId] = useState('');
   const recognitionRef = useRef(null);
@@ -6472,18 +6848,21 @@ function WorshipMemoScreen({ worship, value, onChange, onClose }) {
   const saveMemo = () => {
     const body = draft.trim();
     if (!body) return;
+    const bodyHtml = sanitizeMemoHtml(draftHtml || memoPlainTextToHtml(body));
     const timestamp = Date.now();
     const nextEntries = editingEntryId
-      ? memoEntries.map((entry) => entry.id === editingEntryId ? { ...entry, body, updatedAt: timestamp } : entry)
+      ? memoEntries.map((entry) => entry.id === editingEntryId ? { ...entry, body, bodyHtml, updatedAt: timestamp } : entry)
       : [...memoEntries, {
         id: createMemoId('worship-memo'),
         body,
+        bodyHtml,
         parentId: replyTo?.id ?? null,
         createdAt: timestamp,
         updatedAt: timestamp,
       }];
     updateValue({ memo: body, entries: nextEntries });
     setDraft('');
+    setDraftHtml('');
     setReplyTo(null);
     setEditingEntryId('');
   };
@@ -6541,10 +6920,10 @@ function WorshipMemoScreen({ worship, value, onChange, onClose }) {
             {memoEntries.map((entry) => (
               <article key={entry.id}>
                 <div><span>나</span><time>{new Date(entry.updatedAt).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' })}</time></div>
-                <p>{entry.body}</p>
+                <MemoFormattedText body={entry.body} bodyHtml={entry.bodyHtml} />
                 <div className="worship-memo-comment-actions">
-                  <button type="button" onClick={() => { setEditingEntryId(entry.id); setReplyTo(null); setDraft(entry.body); }}>수정</button>
-                  <button type="button" onClick={() => { setEditingEntryId(''); setReplyTo(entry); setDraft(''); }}>이어 적기</button>
+                  <button type="button" onClick={() => { setEditingEntryId(entry.id); setReplyTo(null); setDraft(entry.body); setDraftHtml(entry.bodyHtml || memoPlainTextToHtml(entry.body)); }}>수정</button>
+                  <button type="button" onClick={() => { setEditingEntryId(''); setReplyTo(entry); setDraft(''); setDraftHtml(''); }}>이어 적기</button>
                 </div>
               </article>
             ))}
@@ -6552,9 +6931,20 @@ function WorshipMemoScreen({ worship, value, onChange, onClose }) {
           </div>
           <div className="worship-memo-composer">
             <span>{editingEntryId ? '메모 수정' : replyTo ? '이어서 적기' : '새 메모'}</span>
-            <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="예배에서 마음에 남은 내용을 적어보세요" />
+            <RichMemoEditor
+              key={editingEntryId || `new-worship-${replyTo?.id ?? 'root'}`}
+              contentKey={editingEntryId || `new-worship-${replyTo?.id ?? 'root'}`}
+              body={draft}
+              bodyHtml={draftHtml}
+              ariaLabel={`${worship.title} 예배 메모`}
+              placeholder="예배에서 마음에 남은 내용을 적어보세요"
+              onChange={(content) => {
+                setDraft(content.body);
+                setDraftHtml(content.bodyHtml);
+              }}
+            />
             <div>
-              {(replyTo || editingEntryId) && <button type="button" onClick={() => { setReplyTo(null); setEditingEntryId(''); setDraft(''); }}>취소</button>}
+              {(replyTo || editingEntryId) && <button type="button" onClick={() => { setReplyTo(null); setEditingEntryId(''); setDraft(''); setDraftHtml(''); }}>취소</button>}
               <button type="button" disabled={!draft.trim()} onClick={saveMemo}>저장</button>
             </div>
           </div>

@@ -7087,7 +7087,7 @@ button.list-row:active,
   min-height: 102px;
 }
 
-.memo-library-list > button strong {
+.memo-library-list > button > strong {
   color: var(--accent-deep);
   font-size: 12px;
   font-weight: 840;
@@ -7103,7 +7103,7 @@ button.list-row:active,
   -webkit-line-clamp: 2;
 }
 
-.memo-library-list > button p {
+.memo-library-list > button > p {
   display: -webkit-box;
   font-size: 12px;
   line-height: 1.55;
@@ -7120,7 +7120,7 @@ button.list-row:active,
   font-weight: 760;
 }
 
-.memo-library-list.is-list > button p {
+.memo-library-list.is-list > button > p {
   -webkit-line-clamp: 2;
 }
 
@@ -13246,6 +13246,168 @@ button.list-row:active,
 .message-special-content-row.is-them .message-sender-avatar + .message-bible-passage {
   flex-basis: auto;
   max-width: min(calc(100% - 78px), 350px);
+}
+
+.memo-formatted-text {
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.memo-formatted-text > :first-child {
+  margin-top: 0;
+}
+
+.memo-formatted-text > :last-child {
+  margin-bottom: 0;
+}
+
+.memo-formatted-text > div,
+.memo-formatted-text > p {
+  line-height: 1.65;
+  margin: 0;
+  min-height: 1.65em;
+}
+
+.memo-library-preview {
+  display: block;
+  font-size: 12px;
+  line-height: 1.55;
+  margin: auto 0 0;
+  max-height: 6.2em;
+  overflow: hidden;
+  width: 100%;
+}
+
+.memo-library-list.is-list .memo-library-preview {
+  max-height: 3.1em;
+}
+
+.rich-memo-editor-shell {
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.rich-memo-toolbar {
+  background: color-mix(in srgb, var(--surface-muted) 82%, var(--surface));
+  border-bottom: 1px solid var(--divider);
+  display: grid;
+  gap: 3px;
+  padding: 5px 7px;
+}
+
+.rich-memo-toolbar-row {
+  align-items: center;
+  display: flex;
+  gap: 3px;
+  min-width: 0;
+}
+
+.rich-memo-toolbar button,
+.rich-memo-color-control {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--ink-soft);
+  display: inline-flex;
+  flex: 0 0 34px;
+  height: 32px;
+  justify-content: center;
+  padding: 0;
+  position: relative;
+  width: 34px;
+}
+
+.rich-memo-toolbar button.is-active,
+.rich-memo-toolbar button:active,
+.rich-memo-color-control:active {
+  background: var(--accent-pale);
+  color: var(--accent-deep);
+}
+
+.rich-memo-toolbar button > b {
+  background: var(--surface);
+  border-radius: 50%;
+  bottom: 2px;
+  color: var(--accent-deep);
+  font-size: 10px;
+  height: 13px;
+  line-height: 13px;
+  position: absolute;
+  right: 2px;
+  text-align: center;
+  width: 13px;
+}
+
+.rich-memo-toolbar-divider {
+  background: var(--divider);
+  height: 20px;
+  margin: 0 3px;
+  width: 1px;
+}
+
+.rich-memo-color-control {
+  cursor: pointer;
+}
+
+.rich-memo-color-control > i {
+  border: 1px solid rgb(25 31 40 / 14%);
+  border-radius: 50%;
+  bottom: 3px;
+  height: 9px;
+  position: absolute;
+  right: 3px;
+  width: 9px;
+}
+
+.rich-memo-color-control > input {
+  cursor: pointer;
+  inset: 0;
+  opacity: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.rich-memo-editor {
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.7;
+  min-height: 180px;
+  outline: 0;
+  overflow-y: auto;
+  padding: 15px 16px;
+  touch-action: pan-y;
+  user-select: text;
+  white-space: pre-wrap;
+  -webkit-user-select: text;
+}
+
+.rich-memo-editor:empty::before {
+  color: var(--muted-light);
+  content: attr(data-placeholder);
+  pointer-events: none;
+}
+
+.rich-memo-editor > div,
+.rich-memo-editor > p {
+  line-height: 1.7;
+  margin: 0;
+  min-height: 1.7em;
+}
+
+.worship-memo-composer .rich-memo-editor {
+  min-height: 110px;
+}
+
+.worship-memo-comments > article > .memo-formatted-text {
+  display: block;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 @media (prefers-reduced-motion: reduce) {
