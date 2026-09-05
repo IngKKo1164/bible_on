@@ -8678,9 +8678,12 @@ button.list-row:active,
 
 /* Message actions, theme controls, and church administration */
 .workspace:has(.church-admin-screen),
-.workspace:has(.church-registration-layer),
-.workspace:has(.confirm-dialog-layer) {
+.workspace:has(.church-registration-layer) {
   overflow: visible;
+  z-index: 40;
+}
+
+.workspace:has(.confirm-dialog-layer) {
   z-index: 40;
 }
 

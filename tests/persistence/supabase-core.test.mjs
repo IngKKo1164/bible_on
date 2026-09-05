@@ -7,6 +7,7 @@ const coreSqlUrl = new URL('../../supabase/migrations/20260904030000_core_applic
 const noteSqlUrl = new URL('../../supabase/migrations/20260904060000_profile_and_note_sync.sql', import.meta.url);
 const departmentSqlUrl = new URL('../../supabase/migrations/20260904080000_department_management_rpcs.sql', import.meta.url);
 const lightThemeSqlUrl = new URL('../../supabase/migrations/20260905093000_light_theme_default.sql', import.meta.url);
+const soloAdminLeaveSqlUrl = new URL('../../supabase/migrations/20260905103000_allow_solo_community_admin_leave.sql', import.meta.url);
 
 test('core shared and personal tables all enable RLS', async () => {
   const sql = await readFile(coreSqlUrl, 'utf8');
@@ -49,6 +50,13 @@ test('new accounts default to light mode with manual theme control', async () =>
   const sql = await readFile(lightThemeSqlUrl, 'utf8');
   assert.match(sql, /theme_preference set default 'light'/i);
   assert.match(sql, /theme_control_mode set default 'always'/i);
+});
+
+test('a sole community administrator can leave without orphaning an active community', async () => {
+  const sql = await readFile(soloAdminLeaveSqlUrl, 'utf8');
+  assert.match(sql, /active_member_count > 1[\s\S]*transfer administrator before leaving/i);
+  assert.match(sql, /update public\.churches[\s\S]*set active = false/i);
+  assert.match(sql, /delete from public\.church_memberships[\s\S]*user_id = auth\.uid\(\)/i);
 });
 
 test('message adapter computes unread counts from shared read sequences', () => {
