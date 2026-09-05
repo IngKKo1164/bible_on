@@ -13113,6 +13113,87 @@ button.list-row:active,
   text-align: center;
 }
 
+.message-room-profile-trigger {
+  align-items: baseline;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 6px;
+  min-height: 40px;
+  min-width: 0;
+  padding: 0 5px;
+  text-align: left;
+}
+
+.message-room-profile-trigger:active {
+  background: var(--surface-pressed);
+}
+
+.chat-participant {
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  grid-template-columns: 38px minmax(0, 1fr) 18px;
+  padding: 3px 2px;
+  text-align: left;
+  width: 100%;
+}
+
+.chat-participant:active {
+  background: var(--surface-pressed);
+}
+
+.chat-participant > svg {
+  color: var(--muted);
+}
+
+.message-bubble-block.is-qt-system {
+  margin-inline: auto;
+}
+
+.message-special-content-row.is-qt-system {
+  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  margin: 5px auto;
+}
+
+.message-special-content-row.is-qt-system .message-qt-passage {
+  flex: 0 1 auto;
+  margin: 0 auto;
+  max-width: min(88%, 350px);
+  width: min(88%, 350px);
+}
+
+.message-special-content-row.is-qt-system > .message-bubble-meta {
+  padding: 4px 0 0;
+}
+
+.message-qt-open-button {
+  align-items: center;
+  background: var(--accent-deep);
+  border: 0;
+  border-radius: 4px;
+  color: #fff;
+  display: flex;
+  font-size: 12px;
+  font-weight: 780;
+  gap: 4px;
+  justify-content: center;
+  margin-top: 4px;
+  min-height: 36px;
+  padding: 7px 12px;
+  width: 100%;
+}
+
+.message-qt-open-button:active {
+  filter: brightness(0.92);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .today-reading::before,
   .today-reading::after,

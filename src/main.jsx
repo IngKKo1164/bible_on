@@ -8401,6 +8401,7 @@ function MessageView({ conversations, setConversations, qtRooms, setQtRooms, fri
           forwardQtRooms={qtRooms}
           onForwardMessage={onForwardMessage}
           members={members}
+          currentChurchId={currentChurchId}
           selectedTranslation={selectedTranslation}
           serverBacked={serverBacked}
           onReloadMessages={onReloadMessages}
@@ -8418,6 +8419,7 @@ function MessageView({ conversations, setConversations, qtRooms, setQtRooms, fri
           forwardQtRooms={qtRooms}
           onForwardMessage={onForwardMessage}
           members={members}
+          currentChurchId={currentChurchId}
           selectedTranslation={selectedTranslation}
           serverBacked={serverBacked}
           onReloadMessages={onReloadMessages}
@@ -8882,7 +8884,7 @@ function MemberSelectionSheet({
   );
 }
 
-function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, onUpdateDraft, onCreateGroup, onOpenBibleVerse, forwardConversations = [], forwardQtRooms = [], onForwardMessage, members = knownMessageMembers, selectedTranslation, serverBacked = false, onReloadMessages }) {
+function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, onUpdateDraft, onCreateGroup, onOpenBibleVerse, forwardConversations = [], forwardQtRooms = [], onForwardMessage, members = knownMessageMembers, currentChurchId, selectedTranslation, serverBacked = false, onReloadMessages }) {
   const [draft, setDraft] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [messageQuery, setMessageQuery] = useState('');
@@ -8896,6 +8898,7 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
   const [deleteWarningOpen, setDeleteWarningOpen] = useState(false);
   const [unsendTarget, setUnsendTarget] = useState(null);
   const [forwardMessage, setForwardMessage] = useState(null);
+  const [selectedParticipantProfile, setSelectedParticipantProfile] = useState(null);
   const [roomNotice, setRoomNotice] = useState('');
   const [attachmentOpen, setAttachmentOpen] = useState(false);
   const [attachmentHeight, setAttachmentHeight] = useState(() => Math.min(320, Math.round(window.innerHeight * 0.38)));
@@ -8915,6 +8918,7 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
   const keyboardHeightRef = useRef(Math.min(320, Math.round(window.innerHeight * 0.38)));
   const participantIds = getConversationParticipantIds(conversation);
   const participants = getConversationParticipants(participantIds, members);
+  const directParticipant = participants.length === 1 ? participants[0] : null;
   const inviteCandidates = members.filter(({ id }) => !participantIds.includes(id));
   const normalizedMessageQuery = messageQuery.trim().toLowerCase();
   const hiddenMessageIds = new Set(conversation.hiddenMessageIds ?? []);
@@ -9382,7 +9386,18 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
               <button className="chat-icon-button" type="button" aria-label="메시지 목록으로 돌아가기" onClick={onBack}>
                 <ChevronLeft size={25} aria-hidden="true" />
               </button>
-              <div><strong>{roomTitle}</strong><span>{participants.length}명</span></div>
+              {directParticipant ? (
+                <button
+                  className="message-room-profile-trigger"
+                  type="button"
+                  aria-label={`${directParticipant.name} 프로필 보기`}
+                  onClick={() => setSelectedParticipantProfile(directParticipant)}
+                >
+                  <strong>{roomTitle}</strong><span>{participants.length}명</span>
+                </button>
+              ) : (
+                <div><strong>{roomTitle}</strong><span>{participants.length}명</span></div>
+              )}
             </div>
             <div className="message-room-actions">
               <button className="chat-icon-button" type="button" aria-label="대화 검색" onClick={() => { setAttachmentOpen(false); setSearchOpen(true); }}>
@@ -9440,25 +9455,39 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
           }
           if (message.type === 'qt-passage') {
             return wrapSelectableMessage(message,
-              <div className={`message-bubble-block is-special ${message.from === 'me' ? 'is-me' : 'is-them'}`} data-message-id={message.id} key={message.id}>
+              <div className="message-bubble-block is-special is-qt-system" data-message-id={message.id} key={message.id}>
                 {renderMessageActionMenu(message)}
-                <div className={`message-special-content-row ${message.from === 'me' ? 'is-me' : 'is-them'}`}>
-                  <button
+                <div className="message-special-content-row is-qt-system">
+                  <article
                     className="message-qt-passage"
-                    type="button"
+                    tabIndex="0"
+                    aria-label={`${message.verse.reference} QT 말씀`}
                     onPointerDown={() => startReactionHold(message.id)}
                     onPointerUp={cancelReactionHold}
                     onPointerCancel={cancelReactionHold}
                     onPointerLeave={cancelReactionHold}
                     onContextMenu={(event) => event.preventDefault()}
                     onKeyDown={(event) => openMessageMenusFromKeyboard(event, message.id)}
-                    onClick={() => { if (reactionMenu?.messageId !== message.id) onOpenBibleVerse?.(message.verse); }}
                   >
                     <span>QT 말씀</span>
                     <strong>{message.verse.reference}</strong>
                     <p>{message.verse.text}</p>
                     <small>{message.verse.translationName}</small>
-                  </button>
+                    <button
+                      className="message-qt-open-button"
+                      type="button"
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                        cancelReactionHold();
+                      }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOpenBibleVerse?.(message.verse);
+                      }}
+                    >
+                      지금 읽으러 가기<ChevronRight size={16} aria-hidden="true" />
+                    </button>
+                  </article>
                   <span className="message-bubble-meta"><time>{message.time}</time></span>
                 </div>
                 {renderMessageReactionMenu(message)}
@@ -9616,10 +9645,17 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
               <div className="chat-menu-section-title"><strong>대화 상대</strong><span>{participants.length}명</span></div>
               <div className="chat-participant-list">
                 {participants.map((participant) => (
-                  <div className="chat-participant" key={participant.id}>
+                  <button
+                    className="chat-participant"
+                    type="button"
+                    aria-label={`${participant.name} 프로필 보기`}
+                    key={participant.id}
+                    onClick={() => setSelectedParticipantProfile(participant)}
+                  >
                     <span className="member-avatar" aria-hidden="true"><UserRound className="default-profile-glyph" /></span>
                     <div><strong>{participant.name}</strong><small>{participant.department} · {participant.role}</small></div>
-                  </div>
+                    <ChevronRight size={17} aria-hidden="true" />
+                  </button>
                 ))}
               </div>
               <button className="chat-invite-button" type="button" onClick={() => setInviteOpen(true)}>
@@ -9663,6 +9699,15 @@ function MessageRoom({ conversation, setConversations, onBack, onPersistDraft, o
           confirmLabel={(count) => `${count}명 초대`}
           onClose={() => setInviteOpen(false)}
           onConfirm={inviteParticipants}
+        />
+      )}
+
+      {selectedParticipantProfile && (
+        <MemberProfileSheet
+          member={selectedParticipantProfile}
+          currentChurchId={currentChurchId}
+          selectedTranslation={selectedTranslation}
+          onClose={() => setSelectedParticipantProfile(null)}
         />
       )}
     </section>
