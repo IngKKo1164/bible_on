@@ -64,3 +64,16 @@ export function getMemberDepartmentNode(nodes, memberId) {
     .filter(({ memberIds = [] }) => memberIds.includes(memberId))
     .sort((left, right) => getDepartmentDepth(nodes, right.id) - getDepartmentDepth(nodes, left.id))[0] ?? null;
 }
+
+export function assignUnassignedMembersToRoot(nodes, memberIds) {
+  const root = nodes.find(({ parentId }) => parentId === null);
+  if (!root) return nodes;
+
+  const assignedIds = new Set(nodes.flatMap(({ memberIds: assigned = [] }) => assigned));
+  const unassignedIds = memberIds.filter((memberId) => memberId && !assignedIds.has(memberId));
+  if (!unassignedIds.length) return nodes;
+
+  return nodes.map((node) => node.id === root.id
+    ? { ...node, memberIds: [...new Set([...(node.memberIds ?? []), ...unassignedIds])] }
+    : node);
+}

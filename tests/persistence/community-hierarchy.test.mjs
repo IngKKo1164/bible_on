@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  assignUnassignedMembersToRoot,
   flattenDepartmentNodes,
   getDepartmentAncestorIds,
   getDepartmentMemberIds,
@@ -49,4 +50,11 @@ test('malformed circular department links do not loop forever', () => {
   ];
   assert.deepEqual([...getDepartmentAncestorIds(circular, 'a')].sort(), ['a', 'b']);
   assert.equal(getMemberDepartmentNode(circular, 'one')?.id, 'a');
+});
+
+test('members without a department fall back to the community root', () => {
+  const normalized = assignUnassignedMembersToRoot(departments, ['admin', 'a', 'unassigned']);
+  assert.deepEqual(normalized.find(({ id }) => id === 'root').memberIds.sort(), ['admin', 'unassigned']);
+  assert.equal(getMemberDepartmentNode(normalized, 'unassigned')?.id, 'root');
+  assert.equal(assignUnassignedMembersToRoot([], ['admin']).length, 0);
 });

@@ -85,6 +85,7 @@ import { messageRepository } from './data/repositories/messageRepository';
 import { subscriptionRepository } from './data/repositories/subscriptionRepository';
 import { buildMessageViewModel } from './data/repositories/messageViewAdapter';
 import {
+  assignUnassignedMembersToRoot,
   flattenDepartmentNodes,
   getDepartmentAncestorIds,
   getDepartmentDepth,
@@ -93,6 +94,12 @@ import {
   getMemberDepartmentNode,
   isCurrentCommunityWorkspace,
 } from './data/communityHierarchy';
+import {
+  createEmptyChapterPopularityData,
+  normalizeChapterPopularityData,
+  rankChapterPopularity,
+  recordUniqueChapterAccess,
+} from './data/chapterPopularity';
 import {
   importGuestAccountData,
   keepGuestAccountDataSeparate,
@@ -916,12 +923,16 @@ function buildCommunityDepartmentNodes(community, serverWorkspace) {
       memberIds: serverWorkspace.members.map((member) => member.userId ?? member.id),
     }];
   }
-  return serverWorkspace.departments.map((department) => ({
+  const nodes = serverWorkspace.departments.map((department) => ({
     id: department.id,
     parentId: department.parentId ?? null,
     name: department.name,
     memberIds: membersByDepartment.get(department.id) ?? [],
   }));
+  return assignUnassignedMembersToRoot(
+    nodes,
+    serverWorkspace.members.map((member) => member.userId ?? member.id)
+  );
 }
 
 function buildCommunityMemberRoles(serverWorkspace, communityId) {
@@ -939,7 +950,7 @@ function buildCommunityMembers(serverWorkspace, communityId) {
   return serverWorkspace.members.map((member) => ({
     ...member,
     id: member.userId ?? member.id,
-    department: departmentNames.get(member.departmentId) ?? '부서 미지정',
+    department: departmentNames.get(member.departmentId) ?? serverWorkspace.church?.name ?? '공동체',
     role: member.title || (member.churchRole === 'admin' ? '관리자' : '구성원'),
   }));
 }
@@ -1276,7 +1287,7 @@ function formatHomeChatTime(timestamp) {
 }
 
 const READ_VERSES_STORAGE_KEY = 'bibleon.readVerseIdsV2';
-const VERSE_POPULARITY_STORAGE_KEY = 'bibleon.versePopularityV1';
+const CHAPTER_POPULARITY_STORAGE_KEY = 'bibleon.versePopularityV1';
 const READING_STATE_STORAGE_KEY = 'bibleon.readingStateV1';
 const READING_PROGRESS_HISTORY_KEY = 'bibleon.readingProgressHistoryV1';
 const ACHIEVEMENTS_STORAGE_KEY = 'bibleon.achievementsV1';
@@ -1292,20 +1303,6 @@ function getPastSeoulDateKey(daysAgo) {
   return getSeoulDateKey(date);
 }
 
-function parseVerseStorageId(verseId) {
-  const matched = verseId.match(/^(.+)-(\d+)-(.+)$/);
-  if (!matched) return null;
-  const book = bibleBooks.find(({ id }) => id === matched[1]);
-  if (!book) return null;
-  const verseLabel = matched[3];
-  return {
-    bookId: book.id,
-    chapter: Number(matched[2]),
-    verse: Number(verseLabel.split('-')[0]),
-    reference: `${book.name} ${matched[2]}:${verseLabel}`,
-  };
-}
-
 function buildPopularityRankings(popularityData) {
   const periods = {
     today: { label: '오늘', dayOffsets: [1] },
@@ -1313,22 +1310,8 @@ function buildPopularityRankings(popularityData) {
     month: { label: '이번 달', dayOffsets: Array.from({ length: 30 }, (_, index) => index + 1) },
   };
   return Object.fromEntries(Object.entries(periods).map(([periodId, period]) => {
-    const totals = new Map();
-    period.dayOffsets.forEach((offset) => {
-      const dayCounts = popularityData.days?.[getPastSeoulDateKey(offset)] ?? {};
-      Object.entries(dayCounts).forEach(([verseId, count]) => {
-        totals.set(verseId, (totals.get(verseId) ?? 0) + Number(count || 0));
-      });
-    });
-    const items = [...totals.entries()]
-      .map(([verseId, count]) => ({
-        verseId,
-        count,
-        ...(popularityData.verses?.[verseId] ?? parseVerseStorageId(verseId)),
-      }))
-      .filter(({ bookId, chapter, verse }) => bookId && chapter && verse)
-      .sort((left, right) => right.count - left.count || left.reference.localeCompare(right.reference, 'ko-KR'))
-      .slice(0, 5);
+    const dateKeys = period.dayOffsets.map((offset) => getPastSeoulDateKey(offset));
+    const items = rankChapterPopularity(popularityData, dateKeys, 5);
     return [periodId, { ...period, items }];
   }));
 }
@@ -1455,6 +1438,8 @@ function App() {
   const searchParams = new URLSearchParams(window.location.search);
   const tutorialPreviewMode = searchParams.get('tutorial') === '1';
   const plusPreviewMode = searchParams.get('plus') === '1';
+  const developmentPlusMode = import.meta.env.DEV
+    || window.location.hostname === 'bibleon-staging.ingkko.chatgpt.site';
   const appShellRef = useRef(null);
   const workspaceRef = useRef(null);
   const tutorialSnapshotRef = useRef(null);
@@ -1511,7 +1496,9 @@ function App() {
   const [readingProgressHistory, setReadingProgressHistory] = useState(() => readStoredValue(READING_PROGRESS_HISTORY_KEY, { cycle: 1, points: {} }));
   const [achievements, setAchievements] = useState(() => readStoredValue(ACHIEVEMENTS_STORAGE_KEY, []));
   const [completionCelebration, setCompletionCelebration] = useState(null);
-  const [popularityData, setPopularityData] = useState(() => readStoredValue(VERSE_POPULARITY_STORAGE_KEY, { version: 1, days: {}, verses: {} }));
+  const [popularityData, setPopularityData] = useState(() => normalizeChapterPopularityData(
+    readStoredValue(CHAPTER_POPULARITY_STORAGE_KEY, createEmptyChapterPopularityData())
+  ));
   const [query, setQuery] = useState('');
   const [newPost, setNewPost] = useState('');
   const [posts, setPosts] = useState(communityPosts);
@@ -1568,7 +1555,7 @@ function App() {
   const [messageMembers, setMessageMembers] = useState(knownMessageMembers);
   const [serverChurchWorkspace, setServerChurchWorkspace] = useState(null);
 
-  const isPlus = plusPreviewMode || subscription.plan === 'plus';
+  const isPlus = developmentPlusMode || plusPreviewMode || subscription.plan === 'plus';
   const notificationPreferences = normalizeNotificationPreferences(accountOnboarding.notificationPreferences);
   const themePalette = useMemo(() => (
     isPlus
@@ -1951,12 +1938,6 @@ function App() {
   const handleTutorialVerseActionsOpened = () => {
     if (appTutorialStep !== BIBLE_ACTION_PRACTICE_STEP || tutorialLongPressDone) return;
     setTutorialLongPressDone(true);
-    window.clearTimeout(tutorialAdvanceTimerRef.current);
-    tutorialAdvanceTimerRef.current = window.setTimeout(() => {
-      setAppTutorialStep((step) => (
-        step === BIBLE_ACTION_PRACTICE_STEP ? step + 1 : step
-      ));
-    }, 2000);
   };
 
   const completeAppTutorial = () => {
@@ -2097,28 +2078,10 @@ function App() {
     )));
   };
 
-  const recordVerseRead = (verse) => {
+  const recordChapterAccess = (chapter) => {
     const dateKey = getSeoulDateKey();
     setAccountOnboarding((current) => ({ ...current, lastBibleReadAt: Date.now() }));
-    setPopularityData((current) => ({
-      version: 1,
-      days: {
-        ...(current.days ?? {}),
-        [dateKey]: {
-          ...(current.days?.[dateKey] ?? {}),
-          [verse.id]: 1,
-        },
-      },
-      verses: {
-        ...(current.verses ?? {}),
-        [verse.id]: {
-          bookId: verse.bookId,
-          chapter: verse.chapter,
-          verse: Number(verse.label ?? verse.verse),
-          reference: verse.ref,
-        },
-      },
-    }));
+    setPopularityData((current) => recordUniqueChapterAccess(current, chapter, dateKey));
   };
 
   const restartBibleReading = () => {
@@ -2138,7 +2101,7 @@ function App() {
   }, [readVerseIds]);
 
   useEffect(() => {
-    writeStoredValue(VERSE_POPULARITY_STORAGE_KEY, popularityData);
+    writeStoredValue(CHAPTER_POPULARITY_STORAGE_KEY, popularityData);
   }, [popularityData]);
 
   useEffect(() => {
@@ -2434,7 +2397,10 @@ function App() {
   };
 
   const openBibleVerse = (verse) => {
-    const target = resolveBibleReference(verse?.reference);
+    const directTarget = verse?.bookId && Number(verse?.chapter)
+      ? { bookId: verse.bookId, chapter: Number(verse.chapter), verse: Number(verse.verse) || 1 }
+      : null;
+    const target = directTarget ?? resolveBibleReference(verse?.reference);
     if (!target) return;
     setSelectedBookId(target.bookId);
     setSelectedChapter(target.chapter);
@@ -2625,6 +2591,25 @@ function App() {
       verseRef: '',
       representativeVerse: '공동체 관리에서 대표 말씀을 설정해 주세요.',
     };
+    const selfMemberId = `self-${churchId}`;
+    writeCommunityScopedValue('bibleon.departmentNodes', churchId, [{
+      id: `${churchId}-root`,
+      parentId: null,
+      name: trimmedName,
+      memberIds: [selfMemberId],
+    }]);
+    writeCommunityScopedValue('bibleon.approvedChurchMembers', churchId, [{
+      ...personalProfile,
+      id: selfMemberId,
+      department: trimmedName,
+      role: '공동체 관리자',
+      churchId,
+      churchName: trimmedName,
+      tone: 'violet',
+    }]);
+    writeCommunityScopedValue('bibleon.churchMemberRoles', churchId, {
+      [selfMemberId]: { title: '공동체 관리자', authority: '관리자', managerDepartmentId: null },
+    });
     setChurchProfiles((current) => ({ ...current, [churchId]: church }));
     setCommunityIds((current) => [...new Set([...current, churchId])].slice(0, MAX_COMMUNITIES));
     setCurrentChurchId(churchId);
@@ -2707,7 +2692,7 @@ function App() {
           churchAccess={churchAccess}
           serverChurchWorkspace={serverChurchWorkspace}
           isPlus={isPlus}
-          plusPreviewMode={plusPreviewMode}
+          plusPreviewMode={plusPreviewMode || developmentPlusMode}
           onRequestPlus={requestPlus}
           notificationPreferences={notificationPreferences}
           onNotificationPreferenceChange={updateNotificationPreference}
@@ -2789,7 +2774,7 @@ function App() {
             setConversations={setConversations}
             qtRooms={qtRooms}
             setQtRooms={setQtRooms}
-            onVerseMarkedRead={activeTutorialScope === 'bible' ? undefined : recordVerseRead}
+            onChapterAccess={activeTutorialScope === 'bible' ? undefined : recordChapterAccess}
             tutorialMode={activeTutorialScope === 'bible'}
             tutorialStep={appTutorialStep}
             onTutorialReadToggle={handleTutorialReadToggle}
@@ -2827,6 +2812,8 @@ function App() {
             serverChurchWorkspace={serverChurchWorkspace}
             serverBacked={Boolean(currentAccountUser)}
             currentUserId={currentAccountUser?.id ?? ''}
+            personalProfile={personalProfile}
+            onReloadCommunity={() => refreshSharedData().catch(() => {})}
             onSearchChurches={searchAvailableChurches}
             onDelegateChurchAdmin={(member) => {
               writeStoredValue('bibleon.churchAdminMemberId', member.id);
@@ -2917,7 +2904,7 @@ function App() {
         <PlusSubscriptionSheet
           activeFeature={plusSheetFeature}
           isPlus={isPlus}
-          previewMode={plusPreviewMode}
+          previewMode={plusPreviewMode || developmentPlusMode}
           onClose={() => setPlusSheetFeature('')}
         />
       )}
@@ -3745,9 +3732,9 @@ function AppTutorial({ step, readPracticePhase, longPressDone, onNext, onSkip })
             {currentStep.interaction === 'long-press' && longPressDone && (
               <div className="app-tutorial-success" role="status"><Check size={16} aria-hidden="true" />잘했어요!</div>
             )}
-            {!isInteractive && (
-              <footer>
-                <button type="button" onClick={onSkip}>건너뛰기</button>
+            {(!isInteractive || (currentStep.interaction === 'long-press' && longPressDone)) && (
+              <footer className={isInteractive ? 'is-guided' : undefined}>
+                {!isInteractive && <button type="button" onClick={onSkip}>건너뛰기</button>}
                 <button type="button" onClick={onNext}>{isLastScopeStep ? '시작하기' : '다음'}</button>
               </footer>
             )}
@@ -4904,7 +4891,7 @@ function BibleView({
   setConversations,
   qtRooms,
   setQtRooms,
-  onVerseMarkedRead,
+  onChapterAccess,
   tutorialMode = false,
   tutorialStep = null,
   onTutorialReadToggle,
@@ -4959,7 +4946,13 @@ function BibleView({
     setChapterState({ status: 'loading', verses: [] });
     loadBibleChapter(selectedTranslation, selectedBook.id, selectedChapter)
       .then((verses) => {
-        if (isCurrent) setChapterState({ status: 'ready', verses });
+        if (!isCurrent) return;
+        setChapterState({ status: 'ready', verses });
+        onChapterAccess?.({
+          bookId: selectedBook.id,
+          chapter: selectedChapter,
+          reference: `${selectedBook.name} ${selectedChapter}장`,
+        });
       })
       .catch(() => {
         if (isCurrent) setChapterState({ status: 'error', verses: [] });
@@ -5116,10 +5109,6 @@ function BibleView({
         ? current.filter((id) => id !== verseId)
         : [...current, verseId]
     ));
-    if (!wasRead) {
-      const verse = activeVerses.find(({ id }) => id === verseId);
-      if (verse) onVerseMarkedRead?.(verse);
-    }
     if (tutorialStep === BIBLE_READ_PRACTICE_STEP && verseId === activeVerses[0]?.id) {
       onTutorialReadToggle?.({ verseId, isRead: !wasRead });
     }
@@ -5916,6 +5905,8 @@ function ChurchView({
   serverChurchWorkspace,
   serverBacked,
   currentUserId,
+  personalProfile,
+  onReloadCommunity,
   onSearchChurches,
   isPlus,
   onRequestPlus,
@@ -5958,12 +5949,16 @@ function ChurchView({
     ?? (currentChurchId === SAMPLE_COMMUNITY_ID ? churchInfo.authority : '성도');
   const currentAuthority = serverBacked && !hasCurrentServerWorkspace ? '성도' : resolvedAuthority;
   const hasChurchAdminPermission = ['관리자', '부서 관리자'].includes(currentAuthority);
+  const selfMemberId = currentUserId || `self-${currentChurchId}`;
   const currentDepartmentNodes = useMemo(() => {
     const serverNodes = buildCommunityDepartmentNodes(currentChurch, serverChurchWorkspace);
-    return hasCurrentServerWorkspace
+    const nodes = hasCurrentServerWorkspace
       ? serverNodes
       : readCommunityScopedValue('bibleon.departmentNodes', currentChurchId, serverNodes);
-  }, [currentChurch, currentChurchId, hasCurrentServerWorkspace, managementOpen, serverChurchWorkspace]);
+    return currentAuthority === '관리자'
+      ? assignUnassignedMembersToRoot(nodes, [selfMemberId])
+      : nodes;
+  }, [currentAuthority, currentChurch, currentChurchId, hasCurrentServerWorkspace, managementOpen, selfMemberId, serverChurchWorkspace]);
   const localCommunityMemberCount = useMemo(() => new Set(
     currentDepartmentNodes.flatMap(({ memberIds }) => memberIds)
   ).size, [currentDepartmentNodes]);
@@ -5971,11 +5966,12 @@ function ChurchView({
     ? serverChurchWorkspace.members.find(({ userId, id }) => (userId ?? id) === currentUserId)
     : null;
   const signedDepartment = currentDepartmentNodes.find(({ id }) => id === signedCommunityMember?.departmentId)
+    ?? (currentAuthority === '관리자' ? currentDepartmentNodes.find(({ parentId }) => parentId === null) : null)
     ?? currentDepartmentNodes.find(({ id }) => id === churchAccess?.managerDepartmentId)
     ?? (currentChurchId === SAMPLE_COMMUNITY_ID
       ? currentDepartmentNodes.find(({ name }) => name === churchInfo.department)
       : null);
-  const currentDepartmentName = signedDepartment?.name ?? '부서 미지정';
+  const currentDepartmentName = signedDepartment?.name ?? currentChurch?.name ?? '공동체';
   const currentCommunityMemberCount = hasCurrentServerWorkspace
     ? serverChurchWorkspace.members.length
     : (serverBacked ? null : Math.max(currentAuthority === '관리자' ? 1 : 0, localCommunityMemberCount));
@@ -6376,6 +6372,9 @@ function ChurchView({
         <ChurchDepartmentDirectorySheet
           community={currentChurch}
           serverWorkspace={serverChurchWorkspace}
+          currentUserId={currentUserId}
+          personalProfile={personalProfile}
+          isCommunityAdministrator={currentAuthority === '관리자'}
           onClose={() => setDepartmentDirectoryOpen(false)}
         />
       )}
@@ -6393,6 +6392,8 @@ function ChurchView({
           churchAccess={churchAccess}
           serverWorkspace={serverChurchWorkspace}
           currentUserId={currentUserId}
+          personalProfile={personalProfile}
+          onReloadCommunity={onReloadCommunity}
           onDelegateChurchAdmin={(member) => {
             setManagementOpen(false);
             onDelegateChurchAdmin(member);
@@ -6774,7 +6775,14 @@ function ChurchAdminRegistrationSheet({ onClose, onCreate }) {
   );
 }
 
-function ChurchDepartmentDirectorySheet({ community, serverWorkspace, onClose }) {
+function ChurchDepartmentDirectorySheet({
+  community,
+  serverWorkspace,
+  currentUserId,
+  personalProfile,
+  isCommunityAdministrator,
+  onClose,
+}) {
   const [expandedDepartmentId, setExpandedDepartmentId] = useState('');
   const { isClosing, dismiss } = useSlideDismiss(onClose);
   const hasCurrentServerWorkspace = isCurrentCommunityWorkspace(
@@ -6783,10 +6791,14 @@ function ChurchDepartmentDirectorySheet({ community, serverWorkspace, onClose })
   );
   const departmentNodes = useMemo(() => {
     const serverNodes = buildCommunityDepartmentNodes(community, serverWorkspace);
-    return hasCurrentServerWorkspace
+    const nodes = hasCurrentServerWorkspace
       ? serverNodes
       : readCommunityScopedValue('bibleon.departmentNodes', community?.id, serverNodes);
-  }, [community, hasCurrentServerWorkspace, serverWorkspace]);
+    const selfMemberId = currentUserId || `self-${community?.id}`;
+    return isCommunityAdministrator
+      ? assignUnassignedMembersToRoot(nodes, [selfMemberId])
+      : nodes;
+  }, [community, currentUserId, hasCurrentServerWorkspace, isCommunityAdministrator, serverWorkspace]);
   const memberRoles = useMemo(() => {
     const serverRoles = buildCommunityMemberRoles(serverWorkspace, community?.id);
     return hasCurrentServerWorkspace
@@ -6802,9 +6814,22 @@ function ChurchDepartmentDirectorySheet({ community, serverWorkspace, onClose })
   const membersById = useMemo(() => new Map(
     (hasCurrentServerWorkspace
       ? buildCommunityMembers(serverWorkspace, community?.id)
-      : [...(community?.id === SAMPLE_COMMUNITY_ID ? churchMessageMembers : []), ...approvedMembers])
+      : [
+        ...(community?.id === SAMPLE_COMMUNITY_ID ? churchMessageMembers : []),
+        ...approvedMembers,
+        ...(isCommunityAdministrator ? [{
+          ...defaultPersonalProfile,
+          ...personalProfile,
+          id: currentUserId || `self-${community?.id}`,
+          department: community?.name ?? '공동체',
+          role: '공동체 관리자',
+          churchId: community?.id,
+          churchName: community?.name ?? '공동체',
+          tone: 'violet',
+        }] : []),
+      ])
       .map((member) => [member.id, member])
-  ), [approvedMembers, community?.id, hasCurrentServerWorkspace, serverWorkspace]);
+  ), [approvedMembers, community, currentUserId, hasCurrentServerWorkspace, isCommunityAdministrator, personalProfile, serverWorkspace]);
   const flattenedNodes = useMemo(() => flattenDepartmentNodes(departmentNodes), [departmentNodes]);
 
   return (
@@ -6860,6 +6885,8 @@ function ChurchManagementScreen({
   churchAccess,
   serverWorkspace,
   currentUserId,
+  personalProfile,
+  onReloadCommunity,
   onDelegateChurchAdmin,
   onClose,
 }) {
@@ -6920,6 +6947,7 @@ function ChurchManagementScreen({
   const assignmentNode = departmentNodes.find(({ id }) => id === assignmentNodeId);
   const activeDepartment = departmentNodes.find(({ id }) => id === activeDepartmentId);
   const isChurchAdministrator = churchAccess?.authority === '관리자';
+  const selfMemberId = currentUserId || `self-${currentCommunityId}`;
   const managerDepartmentId = churchAccess?.authority === '부서 관리자' ? churchAccess.managerDepartmentId : '';
   const manageableNodeIds = useMemo(() => (
     isChurchAdministrator
@@ -6930,8 +6958,20 @@ function ChurchManagementScreen({
   const communityMembers = useMemo(() => {
     const seedMembers = currentCommunityId === SAMPLE_COMMUNITY_ID ? churchMessageMembers : [];
     const membersById = new Map([...seedMembers, ...approvedMembers].map((member) => [member.id, member]));
+    if (isChurchAdministrator && !membersById.has(selfMemberId)) {
+      membersById.set(selfMemberId, {
+        ...defaultPersonalProfile,
+        ...personalProfile,
+        id: selfMemberId,
+        department: churchProfile?.name ?? '공동체',
+        role: '공동체 관리자',
+        churchId: currentCommunityId,
+        churchName: churchProfile?.name ?? '공동체',
+        tone: 'violet',
+      });
+    }
     return [...membersById.values()].sort((left, right) => (left.name ?? '').localeCompare(right.name ?? '', 'ko-KR'));
-  }, [approvedMembers, currentCommunityId]);
+  }, [approvedMembers, churchProfile?.name, currentCommunityId, isChurchAdministrator, personalProfile, selfMemberId]);
   const activeDepartmentMembers = activeDepartment
     ? getDepartmentMemberIds(departmentNodes, activeDepartment.id)
       .map((memberId) => communityMembers.find(({ id }) => id === memberId))
@@ -6966,6 +7006,34 @@ function ChurchManagementScreen({
       && !positionTargetId && !pendingPosition && !kickTargetId && !worshipFormOpen
       && !adminTransferOpen && !pendingAdminTransfer,
   });
+
+  useEffect(() => {
+    if (!hasCurrentServerWorkspace) return;
+    setDepartmentNodes(buildCommunityDepartmentNodes(churchProfile, serverWorkspace));
+    setMemberRoles(buildCommunityMemberRoles(serverWorkspace, currentCommunityId));
+    setApprovedMembers(buildCommunityMembers(serverWorkspace, currentCommunityId));
+  }, [churchProfile, currentCommunityId, hasCurrentServerWorkspace, serverWorkspace]);
+
+  useEffect(() => {
+    if (hasCurrentServerWorkspace || !isChurchAdministrator) return;
+    setApprovedMembers((current) => current.some(({ id }) => id === selfMemberId)
+      ? current
+      : [...current, {
+        ...defaultPersonalProfile,
+        ...personalProfile,
+        id: selfMemberId,
+        department: churchProfile?.name ?? '공동체',
+        role: '공동체 관리자',
+        churchId: currentCommunityId,
+        churchName: churchProfile?.name ?? '공동체',
+        tone: 'violet',
+      }]);
+  }, [churchProfile?.name, currentCommunityId, hasCurrentServerWorkspace, isChurchAdministrator, personalProfile, selfMemberId]);
+
+  useEffect(() => {
+    const memberIds = communityMembers.map(({ id }) => id);
+    setDepartmentNodes((current) => assignUnassignedMembersToRoot(current, memberIds));
+  }, [communityMembers]);
 
   useEffect(() => {
     if (!hasCurrentServerWorkspace) writeCommunityScopedValue('bibleon.departmentNodes', currentCommunityId, departmentNodes);
@@ -7060,21 +7128,32 @@ function ChurchManagementScreen({
     setMoveSelectedIds([memberId]);
   };
 
-  const confirmMemberMove = () => {
+  const confirmMemberMove = async () => {
     if (!moveDestination || !moveSelectedIds.length) return;
+    const destination = moveDestination;
+    const memberIds = [...moveSelectedIds];
+    if (hasCurrentServerWorkspace) {
+      try {
+        await churchRepository.moveMembers(memberIds, destination.id);
+        await onReloadCommunity?.();
+      } catch {
+        showAdminNotice('부서 이동을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.');
+        return;
+      }
+    }
     setDepartmentNodes((current) => {
-      const destinationAncestorIds = getDepartmentAncestorIds(current, moveDestination.id);
+      const destinationAncestorIds = getDepartmentAncestorIds(current, destination.id);
       return current.map((node) => {
         if (!isChurchAdministrator && !manageableNodeIds.has(node.id)) return node;
-        const withoutMovedMembers = node.memberIds.filter((memberId) => !moveSelectedIds.includes(memberId));
+        const withoutMovedMembers = node.memberIds.filter((memberId) => !memberIds.includes(memberId));
         return destinationAncestorIds.has(node.id)
-          ? { ...node, memberIds: [...new Set([...withoutMovedMembers, ...moveSelectedIds])] }
+          ? { ...node, memberIds: [...new Set([...withoutMovedMembers, ...memberIds])] }
           : { ...node, memberIds: withoutMovedMembers };
       });
     });
     setMoveDestination(null);
     setMoveSelectedIds([]);
-    showAdminNotice(`${moveSelectedIds.length}명을 ${moveDestination.name}(으)로 옮겼어요.`);
+    showAdminNotice(`${memberIds.length}명을 ${destination.name}(으)로 옮겼어요.`);
   };
 
   const confirmMemberPosition = () => {
@@ -7237,7 +7316,7 @@ function ChurchManagementScreen({
               {activeDepartmentMembers.map((member) => {
                 const selected = moveSelectedIds.includes(member.id);
                 const directDepartment = getMemberDepartmentNode(departmentNodes, member.id) ?? activeDepartment;
-                const title = memberRoles[member.id]?.title || `${directDepartment.name} 소속`;
+                const title = memberRoles[member.id]?.title || member.role || `${directDepartment.name} 소속`;
                 return (
                   <div className={`department-admin-member ${selected ? 'is-selected' : ''}`} key={member.id}>
                     <button className="department-admin-member-main" type="button" disabled={!moveSelectedIds.length} onClick={() => toggleMoveMember(member.id)}>
@@ -7251,7 +7330,7 @@ function ChurchManagementScreen({
                       <div className="department-member-menu" role="menu">
                         <button type="button" role="menuitem" onClick={() => beginMemberMove(member.id)}><Folder size={16} />부서 이동</button>
                         <button type="button" role="menuitem" onClick={() => { setActiveMemberMenuId(''); setPositionTargetId(member.id); }}><ShieldCheck size={16} />직위 설정</button>
-                        {isChurchAdministrator && member.id !== currentUserId && <button className="is-danger" type="button" role="menuitem" onClick={() => { setActiveMemberMenuId(''); setKickTargetId(member.id); }}><UserMinus size={16} />공동체 강퇴</button>}
+                        {isChurchAdministrator && member.id !== selfMemberId && <button className="is-danger" type="button" role="menuitem" onClick={() => { setActiveMemberMenuId(''); setKickTargetId(member.id); }}><UserMinus size={16} />공동체 강퇴</button>}
                       </div>
                     )}
                   </div>
@@ -7446,7 +7525,7 @@ function ChurchManagementScreen({
       )}
       {adminTransferOpen && (
         <ChurchAdminTransferSheet
-          members={communityMembers.filter(({ id }) => id !== currentUserId)}
+          members={communityMembers.filter(({ id }) => id !== selfMemberId)}
           onClose={() => setAdminTransferOpen(false)}
           onConfirm={(member) => {
             setAdminTransferOpen(false);
@@ -7824,11 +7903,11 @@ function PopularBibleTop({ rankings, onOpenBibleVerse }) {
       </header>
       <div className="popular-bible-list">
         {activeRanking.items.map((item, index) => (
-          <button type="button" key={item.verseId} onClick={() => onOpenBibleVerse({ ...item, translationId: 'KRV' })}>
-            <b>{index + 1}</b><span><strong>{item.reference}</strong><small>{item.count.toLocaleString('ko-KR')}회 읽음</small></span><ChevronRight size={17} />
+          <button type="button" key={item.chapterKey} onClick={() => onOpenBibleVerse({ ...item, verse: 1, translationId: 'KRV' })}>
+            <b>{index + 1}</b><span><strong>{item.reference}</strong><small>{item.count.toLocaleString('ko-KR')}회 열람</small></span><ChevronRight size={17} />
           </button>
         ))}
-        {!activeRanking.items.length && <p>아직 집계된 읽기 기록이 없어요.</p>}
+        {!activeRanking.items.length && <p>아직 집계된 장 열람 기록이 없어요.</p>}
       </div>
     </section>
   );
