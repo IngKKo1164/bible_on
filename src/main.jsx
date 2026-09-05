@@ -941,54 +941,61 @@ function buildGuidanceNotifications(preferences, readingReminderDays) {
 
 const APP_TUTORIAL_STEPS = [
   {
+    scope: 'home',
     target: 'home-chatbot',
     title: '바이블온 채팅',
     description: '말씀을 찾거나 마음을 나누고 싶을 때 이곳에 편하게 질문하세요.',
   },
   {
+    scope: 'home',
     target: 'chat-history',
     title: '지난 대화',
     description: '이전에 나눈 대화를 다시 열거나 새 대화를 시작할 수 있어요.',
   },
   {
+    scope: 'home',
     target: 'bottom-navigation',
     title: '하단 메뉴',
     description: '성경, 공동체, 홈, 메시지, 개인 화면을 이곳에서 전환할 수 있어요.',
   },
   {
-    target: 'bible-tab',
-    title: '성경 탭으로 이동',
-    description: '성경탭을 클릭해보세요!',
-    interaction: 'bible-tab',
-  },
-  {
+    scope: 'bible',
     target: 'bible-switcher',
     title: '성경 변경',
     description: '책과 장을 빠르게 바꾸고 원하는 번역으로 읽을 수 있어요.',
   },
   {
+    scope: 'bible',
     target: 'verse-interactions',
     title: '절 상호작용',
     description: '두 번 탭하면 읽음 상태가 바뀌고, 길게 누르면 메모·강조·전달·분석이 열려요.',
   },
   {
+    scope: 'bible',
     target: 'verse-read-practice',
     title: '읽음 표시 체험',
     description: '이 절을 두 번 눌러 읽음으로 표시한 뒤, 다시 두 번 눌러 읽음 표시를 취소해 보세요.',
     interaction: 'read-cycle',
   },
   {
+    scope: 'bible',
     target: 'verse-action-practice',
     title: '절 옵션 체험',
     description: '이 절을 꾹 눌러 옵션 말풍선을 열어보세요.',
     interaction: 'long-press',
   },
   {
+    scope: 'bible',
     target: 'recent-passages',
     title: '최근 읽은 성경',
     description: '최근 읽던 책과 장을 좌우로 살펴보고 곧바로 이어 읽을 수 있어요.',
   },
 ];
+
+const HOME_TUTORIAL_START = APP_TUTORIAL_STEPS.findIndex(({ scope }) => scope === 'home');
+const BIBLE_TUTORIAL_START = APP_TUTORIAL_STEPS.findIndex(({ scope }) => scope === 'bible');
+const BIBLE_READ_PRACTICE_STEP = APP_TUTORIAL_STEPS.findIndex(({ interaction }) => interaction === 'read-cycle');
+const BIBLE_ACTION_PRACTICE_STEP = APP_TUTORIAL_STEPS.findIndex(({ interaction }) => interaction === 'long-press');
 
 function makeHomeChatTitle(messages) {
   const firstQuestion = messages.find(({ role }) => role === 'user')?.text?.trim() ?? '';
@@ -1218,6 +1225,7 @@ function App() {
   const workspaceRef = useRef(null);
   const tutorialSnapshotRef = useRef(null);
   const tutorialAdvanceTimerRef = useRef(null);
+  const tutorialPreviewCompletedScopesRef = useRef(new Set());
   const initialHomeChatRoomsRef = useRef(null);
   if (initialHomeChatRoomsRef.current === null) {
     initialHomeChatRoomsRef.current = loadHomeChatRooms();
@@ -1327,6 +1335,8 @@ function App() {
   const readingReminderDays = lastBibleReadAt
     ? Math.max(0, Math.floor((Date.now() - lastBibleReadAt) / (24 * 60 * 60 * 1000)))
     : 0;
+  const currentTutorialStep = appTutorialStep === null ? null : APP_TUTORIAL_STEPS[appTutorialStep];
+  const activeTutorialScope = currentTutorialStep?.scope ?? null;
 
   const selectedBook = bibleBooks.find((book) => book.id === selectedBookId) ?? bibleBooks[0];
   const currentChurch = useMemo(() => (
@@ -1355,8 +1365,15 @@ function App() {
   useHeavyOverscroll(appShellRef);
 
   useEffect(() => {
-    if (tutorialPreviewMode) setAppTutorialStep(0);
-  }, [tutorialPreviewMode]);
+    if (appTutorialStep !== null || (!tutorialPreviewMode && !accountSyncReady)) return;
+    const scope = activeTab === 'home' ? 'home' : activeTab === 'bible' ? 'bible' : null;
+    if (!scope) return;
+    const completionKey = scope === 'home' ? 'homeTutorialCompletedAt' : 'bibleTutorialCompletedAt';
+    const completed = tutorialPreviewMode
+      ? tutorialPreviewCompletedScopesRef.current.has(scope)
+      : Boolean(accountOnboarding[completionKey] || accountOnboarding.appTutorialCompletedAt);
+    if (!completed) setAppTutorialStep(scope === 'home' ? HOME_TUTORIAL_START : BIBLE_TUTORIAL_START);
+  }, [accountOnboarding, accountSyncReady, activeTab, appTutorialStep, tutorialPreviewMode]);
 
   useEffect(() => {
     if (!accountRepository.configured) return undefined;
@@ -1382,7 +1399,6 @@ function App() {
       const mergedOnboarding = { ...localOnboarding, ...remoteOnboarding };
       setAccountOnboarding(mergedOnboarding);
       setMemoViewMode(normalizeMemoViewMode(mergedOnboarding.memoViewMode));
-      setAppTutorialStep(tutorialPreviewMode || !mergedOnboarding.appTutorialCompletedAt ? 0 : null);
       if (account.preferences) {
         const preference = account.preferences;
         if (['KRV', 'RNKSV'].includes(preference.defaultTranslation)) {
@@ -1614,16 +1630,6 @@ function App() {
 
   const selectTab = (tabId) => {
     setMessageFriendsMenuOpen(false);
-    if (appTutorialStep === 3) {
-      if (tabId !== 'bible') return;
-      setIsHomeChatOpen(false);
-      setActiveTab('bible');
-      setAppTutorialStep(4);
-      window.requestAnimationFrame(() => {
-        workspaceRef.current?.scrollTo({ top: 0, behavior: 'auto' });
-      });
-      return;
-    }
     if (tabId === 'home') {
       setActiveTab('home');
       closeHomeChat();
@@ -1638,7 +1644,8 @@ function App() {
 
   useEffect(() => {
     if (appTutorialStep === null) return;
-    if (!tutorialSnapshotRef.current) {
+    const tutorialStep = APP_TUTORIAL_STEPS[appTutorialStep];
+    if (tutorialStep?.scope === 'bible' && !tutorialSnapshotRef.current) {
       tutorialSnapshotRef.current = {
         selectedBookId,
         selectedChapter,
@@ -1651,15 +1658,13 @@ function App() {
       setTutorialReadPhase(0);
       setTutorialLongPressDone(false);
     }
-    if (appTutorialStep === 6) {
+    if (appTutorialStep === BIBLE_READ_PRACTICE_STEP) {
       setTutorialReadVerseIds([]);
       setTutorialReadPhase(0);
     }
-    if (appTutorialStep === 7) setTutorialLongPressDone(false);
-    const tutorialTab = appTutorialStep >= 4 ? 'bible' : 'home';
+    if (appTutorialStep === BIBLE_ACTION_PRACTICE_STEP) setTutorialLongPressDone(false);
     setMessageFriendsMenuOpen(false);
     setIsHomeChatOpen(false);
-    setActiveTab(tutorialTab);
     window.requestAnimationFrame(() => {
       workspaceRef.current?.scrollTo({ top: 0, behavior: 'auto' });
     });
@@ -1668,11 +1673,13 @@ function App() {
   useEffect(() => () => window.clearTimeout(tutorialAdvanceTimerRef.current), []);
 
   const handleTutorialReadToggle = ({ isRead }) => {
-    if (appTutorialStep !== 6) return;
+    if (appTutorialStep !== BIBLE_READ_PRACTICE_STEP) return;
     setTutorialReadPhase((current) => {
       if (current === 0 && isRead) return 1;
       if (current === 1 && !isRead) {
-        window.setTimeout(() => setAppTutorialStep((step) => step === 6 ? 7 : step), 180);
+        window.setTimeout(() => setAppTutorialStep((step) => (
+          step === BIBLE_READ_PRACTICE_STEP ? BIBLE_ACTION_PRACTICE_STEP : step
+        )), 180);
         return 2;
       }
       return current;
@@ -1680,21 +1687,32 @@ function App() {
   };
 
   const handleTutorialVerseActionsOpened = () => {
-    if (appTutorialStep !== 7 || tutorialLongPressDone) return;
+    if (appTutorialStep !== BIBLE_ACTION_PRACTICE_STEP || tutorialLongPressDone) return;
     setTutorialLongPressDone(true);
     window.clearTimeout(tutorialAdvanceTimerRef.current);
     tutorialAdvanceTimerRef.current = window.setTimeout(() => {
-      setAppTutorialStep((step) => step === 7 ? 8 : step);
-    }, 700);
+      setAppTutorialStep((step) => (
+        step === BIBLE_ACTION_PRACTICE_STEP ? step + 1 : step
+      ));
+    }, 1200);
   };
 
   const completeAppTutorial = () => {
+    const scope = APP_TUTORIAL_STEPS[appTutorialStep]?.scope;
+    if (!scope) return;
     const completedAt = new Date().toISOString();
+    const completionKey = scope === 'home' ? 'homeTutorialCompletedAt' : 'bibleTutorialCompletedAt';
     const nextOnboarding = {
       ...accountOnboarding,
       memoViewMode,
-      appTutorialCompletedAt: completedAt,
+      [completionKey]: completedAt,
     };
+    const homeCompleted = scope === 'home'
+      || Boolean(accountOnboarding.homeTutorialCompletedAt || accountOnboarding.appTutorialCompletedAt);
+    const bibleCompleted = scope === 'bible'
+      || Boolean(accountOnboarding.bibleTutorialCompletedAt || accountOnboarding.appTutorialCompletedAt);
+    if (homeCompleted && bibleCompleted) nextOnboarding.appTutorialCompletedAt = completedAt;
+    if (tutorialPreviewMode) tutorialPreviewCompletedScopesRef.current.add(scope);
     if (!tutorialPreviewMode) setAccountOnboarding(nextOnboarding);
     const snapshot = tutorialSnapshotRef.current;
     if (snapshot) {
@@ -1708,7 +1726,6 @@ function App() {
     setTutorialReadVerseIds([]);
     setTutorialReadPhase(0);
     setTutorialLongPressDone(false);
-    setActiveTab('home');
     setAppTutorialStep(null);
     if (accountSyncReady && !tutorialPreviewMode) {
       void accountRepository.savePreferences({
@@ -2249,6 +2266,7 @@ function App() {
       throw new Error('공동체는 최대 3개까지 함께 이용할 수 있어요.');
     }
     if (!currentAccountUser) {
+      setChurchProfiles((current) => ({ ...current, [church.id]: { ...current[church.id], ...church } }));
       setCommunityIds((current) => [...new Set([...current, church.id])].slice(0, MAX_COMMUNITIES));
       setCurrentChurchId(church.id);
       setChurchAccess({ authority: church.localAuthority ?? '성도', managerDepartmentId: '' });
@@ -2256,6 +2274,7 @@ function App() {
     }
     const status = await churchRepository.requestMembership(church.id);
     if (status === 'active') {
+      setChurchProfiles((current) => ({ ...current, [church.id]: { ...current[church.id], ...church } }));
       setCommunityIds((current) => [...new Set([...current, church.id])].slice(0, MAX_COMMUNITIES));
       setCurrentChurchId(church.id);
       return;
@@ -2427,8 +2446,8 @@ function App() {
             selectedTranslation={selectedTranslation}
             setSelectedTranslation={setSelectedTranslation}
             setSelectedRef={setSelectedRef}
-            readVerseIds={appTutorialStep !== null ? tutorialReadVerseIds : readVerseIds}
-            setReadVerseIds={appTutorialStep !== null ? setTutorialReadVerseIds : setReadVerseIds}
+            readVerseIds={activeTutorialScope === 'bible' ? tutorialReadVerseIds : readVerseIds}
+            setReadVerseIds={activeTutorialScope === 'bible' ? setTutorialReadVerseIds : setReadVerseIds}
             verseNotes={verseNotes}
             setVerseNotes={setVerseNotes}
             verseNoteMeta={verseNoteMeta}
@@ -2443,8 +2462,8 @@ function App() {
             setConversations={setConversations}
             qtRooms={qtRooms}
             setQtRooms={setQtRooms}
-            onVerseMarkedRead={appTutorialStep !== null ? undefined : recordVerseRead}
-            tutorialMode={appTutorialStep !== null}
+            onVerseMarkedRead={activeTutorialScope === 'bible' ? undefined : recordVerseRead}
+            tutorialMode={activeTutorialScope === 'bible'}
             tutorialStep={appTutorialStep}
             onTutorialReadToggle={handleTutorialReadToggle}
             onTutorialVerseActionsOpened={handleTutorialVerseActionsOpened}
@@ -2539,7 +2558,6 @@ function App() {
       <BottomNav
         activeTab={activeTab === 'home' && isHomeChatOpen ? null : activeTab}
         onSelectTab={selectTab}
-        tutorialStep={appTutorialStep}
       />
       {appTutorialStep !== null && !isAppLoading && !isHomeIntro && !isHomeReturning && (
         <AppTutorial
@@ -2547,7 +2565,8 @@ function App() {
           readPracticePhase={tutorialReadPhase}
           longPressDone={tutorialLongPressDone}
           onNext={() => {
-            if (appTutorialStep >= APP_TUTORIAL_STEPS.length - 1) completeAppTutorial();
+            const nextStep = APP_TUTORIAL_STEPS[appTutorialStep + 1];
+            if (!nextStep || nextStep.scope !== activeTutorialScope) completeAppTutorial();
             else setAppTutorialStep((current) => current + 1);
           }}
           onSkip={completeAppTutorial}
@@ -3228,7 +3247,6 @@ function BottomNav({ activeTab, onSelectTab }) {
             className={`nav-item ${isActive ? 'is-active' : ''}`}
             key={tab.id}
             type="button"
-            data-tutorial={tab.id === 'bible' ? 'bible-tab' : undefined}
             aria-current={isActive ? 'page' : undefined}
             onClick={() => onSelectTab(tab.id)}
           >
@@ -3252,6 +3270,9 @@ function BottomNav({ activeTab, onSelectTab }) {
 function AppTutorial({ step, readPracticePhase, longPressDone, onNext, onSkip }) {
   const [spotlight, setSpotlight] = useState(null);
   const currentStep = APP_TUTORIAL_STEPS[step] ?? APP_TUTORIAL_STEPS[0];
+  const scopeSteps = APP_TUTORIAL_STEPS.filter(({ scope }) => scope === currentStep.scope);
+  const scopeStepIndex = scopeSteps.findIndex(({ target }) => target === currentStep.target);
+  const isLastScopeStep = scopeStepIndex === scopeSteps.length - 1;
   const isInteractive = Boolean(currentStep.interaction);
   const description = currentStep.interaction === 'read-cycle' && readPracticePhase === 1
     ? '읽음으로 표시됐어요. 같은 절을 다시 두 번 눌러 읽음 표시를 취소해 보세요.'
@@ -3271,7 +3292,19 @@ function AppTutorial({ step, readPracticePhase, longPressDone, onNext, onSkip })
       }
 
       const shellRect = shell.getBoundingClientRect();
-      const targetRect = target.getBoundingClientRect();
+      const baseTargetRect = target.getBoundingClientRect();
+      const revealedAction = currentStep.interaction === 'long-press' && longPressDone
+        ? target.closest('.verse-wrap')?.querySelector('.verse-action-inline')
+        : null;
+      const actionRect = revealedAction?.getBoundingClientRect();
+      const targetRect = actionRect ? {
+        left: Math.min(baseTargetRect.left, actionRect.left),
+        right: Math.max(baseTargetRect.right, actionRect.right),
+        top: Math.min(baseTargetRect.top, actionRect.top),
+        bottom: Math.max(baseTargetRect.bottom, actionRect.bottom),
+        width: Math.max(baseTargetRect.right, actionRect.right) - Math.min(baseTargetRect.left, actionRect.left),
+        height: Math.max(baseTargetRect.bottom, actionRect.bottom) - Math.min(baseTargetRect.top, actionRect.top),
+      } : baseTargetRect;
       if (!hasScrolled && (targetRect.top < shellRect.top + 66 || targetRect.bottom > shellRect.bottom - 92)) {
         hasScrolled = true;
         target.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -3307,7 +3340,7 @@ function AppTutorial({ step, readPracticePhase, longPressDone, onNext, onSkip })
       window.removeEventListener('resize', syncSpotlight);
       window.removeEventListener('scroll', syncSpotlight, true);
     };
-  }, [currentStep.target]);
+  }, [currentStep.interaction, currentStep.target, longPressDone]);
 
   return createPortal(
     <div className={`app-tutorial-layer ${isInteractive ? 'is-interactive' : ''}`} role="dialog" aria-modal={!isInteractive} aria-labelledby="app-tutorial-title">
@@ -3323,14 +3356,28 @@ function AppTutorial({ step, readPracticePhase, longPressDone, onNext, onSkip })
             }}
             aria-hidden="true"
           />
+          {!isInteractive && (
+            <button
+              className="app-tutorial-spotlight-action"
+              type="button"
+              aria-label={`${currentStep.title} 확인 후 다음 안내`}
+              style={{
+                left: spotlight.left,
+                top: spotlight.top,
+                width: spotlight.width,
+                height: spotlight.height,
+              }}
+              onClick={onNext}
+            />
+          )}
           <section
             className="app-tutorial-card"
             style={{ left: spotlight.bubbleLeft, top: spotlight.bubbleTop, width: spotlight.bubbleWidth }}
           >
-            <div className="app-tutorial-progress" style={{ '--tutorial-step-count': APP_TUTORIAL_STEPS.length }} aria-label={`튜토리얼 ${step + 1}/${APP_TUTORIAL_STEPS.length}`}>
-              {APP_TUTORIAL_STEPS.map((item, index) => <i className={index <= step ? 'is-active' : ''} key={item.target} />)}
+            <div className="app-tutorial-progress" style={{ '--tutorial-step-count': scopeSteps.length }} aria-label={`튜토리얼 ${scopeStepIndex + 1}/${scopeSteps.length}`}>
+              {scopeSteps.map((item, index) => <i className={index <= scopeStepIndex ? 'is-active' : ''} key={item.target} />)}
             </div>
-            <span>{step + 1} / {APP_TUTORIAL_STEPS.length}</span>
+            <span>{scopeStepIndex + 1} / {scopeSteps.length}</span>
             <h2 id="app-tutorial-title">{currentStep.title}</h2>
             <p aria-live="polite">{description}</p>
             <footer className={isInteractive ? 'is-guided' : ''}>
@@ -3339,7 +3386,7 @@ function AppTutorial({ step, readPracticePhase, longPressDone, onNext, onSkip })
               ) : (
                 <>
                   <button type="button" onClick={onSkip}>건너뛰기</button>
-                  <button type="button" onClick={onNext}>{step === APP_TUTORIAL_STEPS.length - 1 ? '시작하기' : '다음'}</button>
+                  <button type="button" onClick={onNext}>{isLastScopeStep ? '시작하기' : '다음'}</button>
                 </>
               )}
             </footer>
@@ -3907,12 +3954,18 @@ function PassagePickerSheet({ selectedBookId, selectedChapter, onClose, onSelect
   const initialBook = bibleBooks.find((book) => book.id === selectedBookId) ?? bibleBooks[0];
   const [step, setStep] = useState('book');
   const [viewMode, setViewMode] = useState('wheel');
+  const [bookQuery, setBookQuery] = useState('');
   const [testament, setTestament] = useState(initialBook.testament);
   const [draftBookId, setDraftBookId] = useState(initialBook.id);
   const [draftChapter, setDraftChapter] = useState(selectedChapter);
   const { isClosing, dismiss } = useSlideDismiss(onClose);
   const draftBook = bibleBooks.find((book) => book.id === draftBookId) ?? initialBook;
-  const visibleBooks = bibleBooks.filter((book) => book.testament === testament);
+  const normalizedBookQuery = bookQuery.trim().replace(/\s+/g, '').toLowerCase();
+  const visibleBooks = useMemo(() => bibleBooks.filter((book) => (
+    normalizedBookQuery
+      ? `${book.name}${book.file}${book.id}`.replace(/\s+/g, '').toLowerCase().includes(normalizedBookQuery)
+      : book.testament === testament
+  )), [normalizedBookQuery, testament]);
   const chapters = Array.from({ length: draftBook.chapters }, (_, index) => index + 1);
 
   useEffect(() => {
@@ -3926,8 +3979,16 @@ function PassagePickerSheet({ selectedBookId, selectedChapter, onClose, onSelect
   const updateDraftBook = (bookId) => {
     const nextBook = bibleBooks.find((book) => book.id === bookId) ?? bibleBooks[0];
     setDraftBookId(nextBook.id);
+    setTestament(nextBook.testament);
     setDraftChapter((current) => Math.min(current, nextBook.chapters));
   };
+
+  useEffect(() => {
+    if (step !== 'book' || !visibleBooks.length || visibleBooks.some(({ id }) => id === draftBookId)) return;
+    const firstBook = visibleBooks[0];
+    setDraftBookId(firstBook.id);
+    setDraftChapter((current) => Math.min(current, firstBook.chapters));
+  }, [draftBookId, step, visibleBooks]);
 
   const changeTestament = (nextTestament) => {
     setTestament(nextTestament);
@@ -3996,35 +4057,46 @@ function PassagePickerSheet({ selectedBookId, selectedChapter, onClose, onSelect
         </header>
 
         <div className={`picker-testament-slot ${step === 'book' ? '' : 'is-empty'}`}>
-          {step === 'book' && <div className="picker-testament-tabs" role="tablist" aria-label="성경 구분">
-            {['구약', '신약'].map((item) => (
-              <button
-                className={testament === item ? 'is-active' : ''}
-                key={item}
-                type="button"
-                role="tab"
-                aria-selected={testament === item}
-                onClick={() => changeTestament(item)}
-              >
-                {item}
-              </button>
-            ))}
-          </div>}
+          {step === 'book' && (
+            <>
+              <div className="picker-testament-tabs" role="tablist" aria-label="성경 구분">
+                {['구약', '신약'].map((item) => (
+                  <button
+                    className={testament === item ? 'is-active' : ''}
+                    key={item}
+                    type="button"
+                    role="tab"
+                    aria-selected={testament === item}
+                    onClick={() => { setBookQuery(''); changeTestament(item); }}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+              <label className="picker-book-search">
+                <Search size={17} aria-hidden="true" />
+                <input value={bookQuery} onChange={(event) => setBookQuery(event.target.value)} placeholder="성경 이름 검색" />
+                {bookQuery && <button type="button" aria-label="성경 이름 검색어 지우기" onClick={() => setBookQuery('')}><X size={16} /></button>}
+              </label>
+            </>
+          )}
         </div>
 
         <div className={`passage-picker-content is-${viewMode}`}>
         {viewMode === 'wheel' ? (
           <>
-            <PickerWheel
-              items={wheelItems}
-              value={wheelValue}
-              label={step === 'book' ? '성경 Wheel 선택' : `${draftBook.name} 장 Wheel 선택`}
-              onChange={(value) => {
-                if (step === 'book') updateDraftBook(value);
-                else setDraftChapter(Number(value));
-              }}
-            />
-            <button className="picker-confirm-button" type="button" onClick={confirmWheelValue}>
+            {wheelItems.length ? (
+              <PickerWheel
+                items={wheelItems}
+                value={wheelValue}
+                label={step === 'book' ? '성경 Wheel 선택' : `${draftBook.name} 장 Wheel 선택`}
+                onChange={(value) => {
+                  if (step === 'book') updateDraftBook(value);
+                  else setDraftChapter(Number(value));
+                }}
+              />
+            ) : <p className="picker-book-empty">일치하는 성경이 없어요.</p>}
+            <button className="picker-confirm-button" type="button" disabled={!wheelItems.length} onClick={confirmWheelValue}>
               {step === 'book' ? '다음' : `${draftBook.name} ${draftChapter}장 열기`}
             </button>
           </>
@@ -4048,6 +4120,7 @@ function PassagePickerSheet({ selectedBookId, selectedChapter, onClose, onSelect
                 </button>
               );
             })}
+            {step === 'book' && !visibleBooks.length && <p className="picker-book-empty">일치하는 성경이 없어요.</p>}
           </div>
         )}
         </div>
@@ -4465,7 +4538,7 @@ function BibleView({
       const verse = activeVerses.find(({ id }) => id === verseId);
       if (verse) onVerseMarkedRead?.(verse);
     }
-    if (tutorialStep === 6 && verseId === activeVerses[0]?.id) {
+    if (tutorialStep === BIBLE_READ_PRACTICE_STEP && verseId === activeVerses[0]?.id) {
       onTutorialReadToggle?.({ verseId, isRead: !wasRead });
     }
   };
@@ -4713,7 +4786,7 @@ function BibleView({
       setVerseActionClosing(false);
       setSelectedVerse(verse.id);
       setVerseActionAnchor({ source: 'verse', verseId: verse.id });
-      if (tutorialStep === 7 && verse.id === activeVerses[0]?.id) {
+      if (tutorialStep === BIBLE_ACTION_PRACTICE_STEP && verse.id === activeVerses[0]?.id) {
         onTutorialVerseActionsOpened?.(verse.id);
       }
     }, 500);
@@ -4798,7 +4871,7 @@ function BibleView({
   }, []);
 
   useEffect(() => {
-    if (!tutorialMode || tutorialStep === 7) return;
+    if (!tutorialMode || tutorialStep === BIBLE_ACTION_PRACTICE_STEP) return;
     setSelectedVerse(null);
     setVerseActionAnchor(null);
     setVerseActionClosing(false);
@@ -5010,9 +5083,9 @@ function BibleView({
                   <button
                     className="verse-row"
                     data-tutorial={verse === activeVerses[0]
-                      ? tutorialStep === 6
+                      ? tutorialStep === BIBLE_READ_PRACTICE_STEP
                         ? 'verse-read-practice'
-                        : tutorialStep === 7
+                        : tutorialStep === BIBLE_ACTION_PRACTICE_STEP
                           ? 'verse-action-practice'
                           : 'verse-interactions'
                       : undefined}
@@ -5428,6 +5501,7 @@ function ChurchView({
         {churchRegistrationOpen && (
           <ChurchRegistrationSheet
             churchProfiles={churchProfiles}
+            joinedCommunityIds={communities.map(({ id }) => id)}
             onSearchChurches={onSearchChurches}
             onClose={() => setChurchRegistrationOpen(false)}
             onRegister={onRegisterChurch}
@@ -5596,6 +5670,7 @@ function ChurchView({
       {churchRegistrationOpen && (
         <ChurchRegistrationSheet
           churchProfiles={churchProfiles}
+          joinedCommunityIds={communities.map(({ id }) => id)}
           onSearchChurches={onSearchChurches}
           onClose={() => setChurchRegistrationOpen(false)}
           onRegister={onRegisterChurch}
@@ -5658,7 +5733,11 @@ function ChurchView({
       )}
 
       {departmentDirectoryOpen && (
-        <ChurchDepartmentDirectorySheet onClose={() => setDepartmentDirectoryOpen(false)} />
+        <ChurchDepartmentDirectorySheet
+          community={currentChurch}
+          serverWorkspace={serverChurchWorkspace}
+          onClose={() => setDepartmentDirectoryOpen(false)}
+        />
       )}
 
       {managementOpen && (
@@ -5846,7 +5925,7 @@ function CommunityEntrySheet({ onClose, onJoin, onCreate }) {
   );
 }
 
-function ChurchRegistrationSheet({ churchProfiles, onClose, onRegister, onSearchChurches }) {
+function ChurchRegistrationSheet({ churchProfiles, joinedCommunityIds = [], onClose, onRegister, onSearchChurches }) {
   const [query, setQuery] = useState('');
   const [selectedChurch, setSelectedChurch] = useState(null);
   const [unregisteredName, setUnregisteredName] = useState('');
@@ -5854,6 +5933,7 @@ function ChurchRegistrationSheet({ churchProfiles, onClose, onRegister, onSearch
   const [errorMessage, setErrorMessage] = useState('');
   const { isClosing, dismiss } = useSlideDismiss(onClose);
   const [suggestions, setSuggestions] = useState([]);
+  const joinedCommunityIdSet = useMemo(() => new Set(joinedCommunityIds), [joinedCommunityIds]);
 
   useEffect(() => {
     if (selectedChurch || !query.trim()) {
@@ -5882,6 +5962,12 @@ function ChurchRegistrationSheet({ churchProfiles, onClose, onRegister, onSearch
       ({ name }) => name.replace(/\s+/g, '').toLowerCase() === normalizedQuery
     );
     if (exactChurch) {
+      if (joinedCommunityIdSet.has(exactChurch.id)) {
+        setSelectedChurch(null);
+        setUnregisteredName('');
+        setSuggestions(availableChurches.filter(({ id }) => id === exactChurch.id));
+        return;
+      }
       setSelectedChurch(exactChurch);
       setUnregisteredName('');
       return;
@@ -5900,10 +5986,17 @@ function ChurchRegistrationSheet({ churchProfiles, onClose, onRegister, onSearch
         </form>
         <div className="church-registration-results">
           {suggestions.map((church) => (
-            <button type="button" key={church.id} onClick={() => { setSelectedChurch(church); setQuery(church.name); setUnregisteredName(''); }}>
+            <button
+              className={joinedCommunityIdSet.has(church.id) ? 'is-joined' : ''}
+              type="button"
+              key={church.id}
+              disabled={joinedCommunityIdSet.has(church.id)}
+              aria-disabled={joinedCommunityIdSet.has(church.id)}
+              onClick={() => { setSelectedChurch(church); setQuery(church.name); setUnregisteredName(''); }}
+            >
               <span className={`church-search-avatar ${church.profileImage ? 'has-image' : ''}`}>{church.profileImage ? <img src={church.profileImage} alt="" /> : <Users size={20} />}</span>
-              <span><strong>{church.name}</strong><small>{getCommunityTypeLabel(church)} · {church.location || '지역 미설정'}</small><em>{church.verseRef} · {church.representativeVerse}</em></span>
-              <ChevronRight size={17} aria-hidden="true" />
+              <span><strong>{church.name}</strong><small>{joinedCommunityIdSet.has(church.id) ? '이미 참여 중 · ' : ''}{getCommunityTypeLabel(church)} · {church.location || '지역 미설정'}</small><em>{church.verseRef} · {church.representativeVerse}</em></span>
+              {joinedCommunityIdSet.has(church.id) ? <Check size={17} aria-hidden="true" /> : <ChevronRight size={17} aria-hidden="true" />}
             </button>
           ))}
           {selectedChurch && (
@@ -5987,18 +6080,45 @@ function ChurchAdminRegistrationSheet({ onClose, onCreate }) {
   );
 }
 
-function ChurchDepartmentDirectorySheet({ onClose }) {
+function ChurchDepartmentDirectorySheet({ community, serverWorkspace, onClose }) {
   const [expandedDepartmentId, setExpandedDepartmentId] = useState('');
   const { isClosing, dismiss } = useSlideDismiss(onClose);
-  const departmentNodes = useMemo(
-    () => readStoredValue('bibleon.departmentNodes', initialDepartmentNodes),
-    []
-  );
+  const hasCurrentServerWorkspace = serverWorkspace?.church?.id === community?.id;
+  const departmentNodes = useMemo(() => {
+    if (hasCurrentServerWorkspace) {
+      const membersByDepartment = new Map();
+      serverWorkspace.members.forEach((member) => {
+        if (!member.departmentId) return;
+        membersByDepartment.set(member.departmentId, [
+          ...(membersByDepartment.get(member.departmentId) ?? []),
+          member.userId ?? member.id,
+        ]);
+      });
+      if (serverWorkspace.departments.length) {
+        return serverWorkspace.departments.map((department) => ({
+          id: department.id,
+          parentId: department.parentId ?? null,
+          name: department.name,
+          memberIds: membersByDepartment.get(department.id) ?? [],
+        }));
+      }
+      return [{ id: `${community.id}-root`, parentId: null, name: community.name, memberIds: serverWorkspace.members.map((member) => member.userId ?? member.id) }];
+    }
+    if (community?.id === 'grace-spring') return readStoredValue('bibleon.departmentNodes', initialDepartmentNodes);
+    return [{ id: `${community?.id ?? 'community'}-root`, parentId: null, name: community?.name ?? '공동체', memberIds: [] }];
+  }, [community?.id, community?.name, hasCurrentServerWorkspace, serverWorkspace]);
   const memberRoles = useMemo(() => readStoredValue('bibleon.churchMemberRoles', {}), []);
   const approvedMembers = useMemo(() => readStoredValue('bibleon.approvedChurchMembers', []), []);
   const membersById = useMemo(() => new Map(
-    [...churchMessageMembers, ...approvedMembers].map((member) => [member.id, member])
-  ), [approvedMembers]);
+    (hasCurrentServerWorkspace
+      ? serverWorkspace.members.map((member) => ({
+        ...member,
+        id: member.userId ?? member.id,
+        role: member.title || (member.churchRole === 'admin' ? '관리자' : '구성원'),
+      }))
+      : [...churchMessageMembers, ...approvedMembers])
+      .map((member) => [member.id, member])
+  ), [approvedMembers, hasCurrentServerWorkspace, serverWorkspace]);
   const flattenedNodes = useMemo(() => flattenDepartmentNodes(departmentNodes), [departmentNodes]);
 
   return (
