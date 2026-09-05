@@ -2687,6 +2687,11 @@ function App() {
             navigationTarget={messageNavigationTarget}
             onNavigationHandled={() => setMessageNavigationTarget(null)}
             members={messageMembers}
+            personalProfile={personalProfile}
+            currentUserId={currentAccountUser?.id ?? ''}
+            currentCommunity={currentChurch}
+            churchAccess={churchAccess}
+            serverChurchWorkspace={serverChurchWorkspace}
             selectedTranslation={selectedTranslation}
             serverBacked={Boolean(currentAccountUser)}
             onReloadMessages={() => refreshSharedData().catch(() => {})}
@@ -7574,7 +7579,7 @@ function HomeRecommendations({ query, setQuery, selectBiblePassage, onOpenBibleV
   );
 }
 
-function MessageView({ conversations, setConversations, qtRooms, setQtRooms, friendsMenuOpen, onCloseFriendsMenu, onOpenBibleVerse, onForwardMessage, currentChurchId, navigationTarget, onNavigationHandled, members = knownMessageMembers, selectedTranslation, serverBacked = false, onReloadMessages }) {
+function MessageView({ conversations, setConversations, qtRooms, setQtRooms, friendsMenuOpen, onCloseFriendsMenu, onOpenBibleVerse, onForwardMessage, currentChurchId, navigationTarget, onNavigationHandled, members = knownMessageMembers, personalProfile, currentUserId, currentCommunity, churchAccess, serverChurchWorkspace, selectedTranslation, serverBacked = false, onReloadMessages }) {
   const [directoryMode, setDirectoryMode] = useState('recent');
   const [openConversationId, setOpenConversationId] = useState('');
   const [openQtRoomId, setOpenQtRoomId] = useState('');
@@ -7592,6 +7597,31 @@ function MessageView({ conversations, setConversations, qtRooms, setQtRooms, fri
   const openConversation = storedOpenConversation
     ?? (draftConversation?.id === openConversationId ? draftConversation : null);
   const normalizedQuery = searchQuery.trim().toLowerCase();
+  const hasCurrentServerWorkspace = isCurrentCommunityWorkspace(
+    currentChurchId,
+    serverChurchWorkspace?.church?.id
+  );
+  const signedMember = hasCurrentServerWorkspace
+    ? serverChurchWorkspace.members.find(({ userId, id }) => (userId ?? id) === currentUserId)
+    : null;
+  const signedDepartment = hasCurrentServerWorkspace
+    ? serverChurchWorkspace.departments.find(({ id }) => id === signedMember?.departmentId)
+    : null;
+  const selfProfileMember = {
+    id: currentUserId || 'bibleon-self-profile',
+    name: personalProfile?.name || '나',
+    nickname: personalProfile?.nickname || '',
+    avatarImage: personalProfile?.avatarImage || '',
+    verseRef: personalProfile?.verseRef || '',
+    representativeVerse: personalProfile?.representativeVerse || '',
+    featuredAchievementName: personalProfile?.featuredAchievementName || '',
+    churchId: currentChurchId || '',
+    churchName: currentCommunity?.name || '개인 프로필',
+    department: currentCommunity ? (signedDepartment?.name || '부서 미지정') : '소속 공동체 없음',
+    role: signedMember?.title || (currentCommunity ? (churchAccess?.authority || '구성원') : '나'),
+    tone: 'violet',
+    isSelf: true,
+  };
   const filteredConversations = conversations.filter((conversation) => (
     [
       conversation.name,
@@ -7613,9 +7643,12 @@ function MessageView({ conversations, setConversations, qtRooms, setQtRooms, fri
   };
   const recentConversationIds = new Set(conversations.flatMap(getConversationParticipantIds));
   const filteredDirectoryMembers = members.filter((member) => (
-    friendIds.includes(member.id)
+    member.id !== currentUserId
+    && member.id !== selfProfileMember.id
+    && friendIds.includes(member.id)
     && !recentConversationIds.has(member.id)
     && [member.name, member.department, member.role, member.churchName]
+      .filter(Boolean)
       .some((value) => value.toLowerCase().includes(normalizedQuery))
   ));
   const filteredQtRooms = qtRooms.filter((room) => (
@@ -7865,6 +7898,18 @@ function MessageView({ conversations, setConversations, qtRooms, setQtRooms, fri
           </div>
         ) : directoryMode === 'members' ? (
           <div className="member-directory-list">
+            <button
+              className="member-directory-row message-self-profile-row"
+              type="button"
+              onClick={() => setSelectedMemberProfile(selfProfileMember)}
+            >
+              <PersonalAvatar profile={personalProfile ?? defaultPersonalProfile} className="directory-avatar message-self-avatar" />
+              <span className="member-directory-copy">
+                <span><strong>{selfProfileMember.name}</strong><small>내 프로필{selfProfileMember.nickname ? ` · @${selfProfileMember.nickname}` : ''}</small></span>
+                <p><BookOpen size={13} aria-hidden="true" /><span>{selfProfileMember.verseRef || '대표 말씀'}</span><RepresentativeVerseText reference={selfProfileMember.verseRef} fallbackText={selfProfileMember.representativeVerse} translationId={selectedTranslation} /></p>
+              </span>
+              <ChevronRight size={18} aria-hidden="true" />
+            </button>
             {filteredDirectoryMembers.map((member) => (
               <button
                 className="member-directory-row"
@@ -7909,7 +7954,7 @@ function MessageView({ conversations, setConversations, qtRooms, setQtRooms, fri
           currentChurchId={currentChurchId}
           selectedTranslation={selectedTranslation}
           onClose={() => setSelectedMemberProfile(null)}
-          onMessage={() => startMemberConversation(selectedMemberProfile)}
+          onMessage={selectedMemberProfile.isSelf ? undefined : () => startMemberConversation(selectedMemberProfile)}
         />
       )}
 

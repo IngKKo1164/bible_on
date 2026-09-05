@@ -4233,6 +4233,23 @@ button.list-row:active,
   background: var(--surface-muted);
 }
 
+.message-self-profile-row {
+  border-top: 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.message-self-avatar {
+  background: var(--accent);
+  color: #fff;
+  overflow: hidden;
+}
+
+.message-self-avatar img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
 .directory-avatar,
 .member-profile-avatar {
   align-items: center;
