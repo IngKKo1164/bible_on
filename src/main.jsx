@@ -41,6 +41,7 @@ import {
   PenLine,
   Palette,
   Play,
+  Pointer,
   Plus,
   Reply,
   RotateCcw,
@@ -973,14 +974,14 @@ const APP_TUTORIAL_STEPS = [
   {
     scope: 'bible',
     target: 'verse-read-practice',
-    title: '읽음 표시 체험',
+    title: '읽음 표시',
     description: '이 절을 두 번 눌러 읽음으로 표시한 뒤, 다시 두 번 눌러 읽음 표시를 취소해 보세요.',
     interaction: 'read-cycle',
   },
   {
     scope: 'bible',
     target: 'verse-action-practice',
-    title: '절 옵션 체험',
+    title: '절 옵션',
     description: '이 절을 꾹 눌러 옵션 말풍선을 열어보세요.',
     interaction: 'long-press',
   },
@@ -1237,11 +1238,11 @@ function App() {
   const [isHomeIntro, setIsHomeIntro] = useState(true);
   const [isHomeGradientVisible, setIsHomeGradientVisible] = useState(false);
   const [isHomeReturning, setIsHomeReturning] = useState(false);
-  const [themePreference, setThemePreference] = useState(() => readStoredValue('bibleon.themePreference', 'system'));
+  const [themePreference, setThemePreference] = useState(() => readStoredValue('bibleon.themePreference', 'light'));
   const [themeControlMode, setThemeControlMode] = useState(() => readStoredValue(
     'bibleon.themeControlMode',
-    ['system', 'schedule'].includes(readStoredValue('bibleon.themePreference', 'system'))
-      ? readStoredValue('bibleon.themePreference', 'system')
+    ['system', 'schedule'].includes(readStoredValue('bibleon.themePreference', 'light'))
+      ? readStoredValue('bibleon.themePreference', 'light')
       : 'always'
   ));
   const [darkModeStart, setDarkModeStart] = useState(() => readStoredValue('bibleon.darkModeStart', '21:00'));
@@ -1694,7 +1695,7 @@ function App() {
       setAppTutorialStep((step) => (
         step === BIBLE_ACTION_PRACTICE_STEP ? step + 1 : step
       ));
-    }, 1200);
+    }, 2000);
   };
 
   const completeAppTutorial = () => {
@@ -3277,7 +3278,7 @@ function AppTutorial({ step, readPracticePhase, longPressDone, onNext, onSkip })
   const description = currentStep.interaction === 'read-cycle' && readPracticePhase === 1
     ? '읽음으로 표시됐어요. 같은 절을 다시 두 번 눌러 읽음 표시를 취소해 보세요.'
     : currentStep.interaction === 'long-press' && longPressDone
-      ? '옵션 말풍선을 열었어요. 마지막 안내로 이동합니다.'
+      ? '옵션 말풍선을 직접 확인했어요.'
       : currentStep.description;
 
   useLayoutEffect(() => {
@@ -3356,6 +3357,18 @@ function AppTutorial({ step, readPracticePhase, longPressDone, onNext, onSkip })
             }}
             aria-hidden="true"
           />
+          {isInteractive && !longPressDone && (
+            <span
+              className={`app-tutorial-demo-pointer is-${currentStep.interaction}`}
+              style={{
+                left: spotlight.left + (spotlight.width * 0.68) - 18,
+                top: spotlight.top + (spotlight.height * 0.52) - 18,
+              }}
+              aria-hidden="true"
+            >
+              <Pointer size={36} fill="currentColor" strokeWidth={1.35} />
+            </span>
+          )}
           {!isInteractive && (
             <button
               className="app-tutorial-spotlight-action"
@@ -3380,16 +3393,15 @@ function AppTutorial({ step, readPracticePhase, longPressDone, onNext, onSkip })
             <span>{scopeStepIndex + 1} / {scopeSteps.length}</span>
             <h2 id="app-tutorial-title">{currentStep.title}</h2>
             <p aria-live="polite">{description}</p>
-            <footer className={isInteractive ? 'is-guided' : ''}>
-              {isInteractive ? (
-                <span className="app-tutorial-guided-hint">강조된 영역을 직접 사용하면 다음 안내로 이동해요.</span>
-              ) : (
-                <>
-                  <button type="button" onClick={onSkip}>건너뛰기</button>
-                  <button type="button" onClick={onNext}>{isLastScopeStep ? '시작하기' : '다음'}</button>
-                </>
-              )}
-            </footer>
+            {currentStep.interaction === 'long-press' && longPressDone && (
+              <div className="app-tutorial-success" role="status"><Check size={16} aria-hidden="true" />잘했어요!</div>
+            )}
+            {!isInteractive && (
+              <footer>
+                <button type="button" onClick={onSkip}>건너뛰기</button>
+                <button type="button" onClick={onNext}>{isLastScopeStep ? '시작하기' : '다음'}</button>
+              </footer>
+            )}
           </section>
         </>
       )}
@@ -3720,12 +3732,91 @@ function HomeView({
   );
 }
 
-function MemoEditorScreen({ verse, value, initialMode = 'view', onChange, onClose }) {
+function MemoEditorScreen({ verse, verses, value, initialMode = 'view', onChange, onClose }) {
   const [mode, setMode] = useState(initialMode);
+  const [copyActionsOpen, setCopyActionsOpen] = useState(false);
+  const [copyNotice, setCopyNotice] = useState('');
+  const verseContextRef = useRef(null);
+  const verseTextRef = useRef(null);
+  const copyPressTimerRef = useRef(null);
+  const copyPressRef = useRef(null);
+  const displayedVerses = Array.isArray(verses) && verses.length ? verses : [verse];
+  const passageText = displayedVerses
+    .map((item) => `${item.ref}${item.text ? `\n${item.text}` : ''}`)
+    .join('\n\n');
 
   useEffect(() => {
     setMode(initialMode);
+    setCopyActionsOpen(false);
+    setCopyNotice('');
   }, [initialMode, verse.id]);
+
+  useEffect(() => () => window.clearTimeout(copyPressTimerRef.current), []);
+
+  useEffect(() => {
+    if (!copyActionsOpen) return undefined;
+    const closeOnOutsidePointer = (event) => {
+      if (!verseContextRef.current?.contains(event.target)) setCopyActionsOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer, true);
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer, true);
+  }, [copyActionsOpen]);
+
+  const clearCopyPress = () => {
+    window.clearTimeout(copyPressTimerRef.current);
+    copyPressTimerRef.current = null;
+  };
+
+  const startCopyPress = (event) => {
+    if (event.button !== 0 || event.target.closest('.memo-copy-actions')) return;
+    clearCopyPress();
+    copyPressRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+    copyPressTimerRef.current = window.setTimeout(() => {
+      setCopyActionsOpen(true);
+      copyPressRef.current = null;
+    }, 520);
+  };
+
+  const moveCopyPress = (event) => {
+    const press = copyPressRef.current;
+    if (!press || press.pointerId !== event.pointerId) return;
+    if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > 8) {
+      clearCopyPress();
+      copyPressRef.current = null;
+    }
+  };
+
+  const endCopyPress = () => {
+    clearCopyPress();
+    copyPressRef.current = null;
+  };
+
+  const copyAllPassages = async () => {
+    try {
+      await navigator.clipboard.writeText(passageText);
+      setCopyNotice('복사했어요');
+      window.setTimeout(() => setCopyNotice(''), 1400);
+    } catch {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(verseTextRef.current);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.execCommand('copy');
+      selection.removeAllRanges();
+      setCopyNotice('복사했어요');
+    }
+    setCopyActionsOpen(false);
+  };
+
+  const selectPassageText = () => {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(verseTextRef.current);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    setCopyActionsOpen(false);
+  };
 
   return (
     <section className="memo-editor-screen" role="dialog" aria-modal="true" aria-labelledby="memo-editor-title">
@@ -3737,9 +3828,31 @@ function MemoEditorScreen({ verse, value, initialMode = 'view', onChange, onClos
         <span aria-hidden="true" />
       </header>
       <div className="memo-editor-body">
-        <div className="memo-verse-context">
-          <strong>{verse.ref}</strong>
-          {verse.text && <p>{verse.text}</p>}
+        <div
+          className={`memo-verse-context ${displayedVerses.length > 1 ? 'is-multiple' : ''}`}
+          ref={verseContextRef}
+          onContextMenu={(event) => event.preventDefault()}
+          onPointerDown={startCopyPress}
+          onPointerMove={moveCopyPress}
+          onPointerUp={endCopyPress}
+          onPointerCancel={endCopyPress}
+          aria-label={`선택한 말씀 ${displayedVerses.length}절`}
+        >
+          <div className="memo-verse-scroll" ref={verseTextRef}>
+            {displayedVerses.map((item) => (
+              <article className="memo-selected-verse" key={item.id ?? item.ref}>
+                <strong>{item.ref}</strong>
+                {item.text && <p>{item.text}</p>}
+              </article>
+            ))}
+          </div>
+          {copyActionsOpen && (
+            <div className="memo-copy-actions" role="menu" aria-label="말씀 복사">
+              <button type="button" role="menuitem" onClick={copyAllPassages}><Copy size={15} aria-hidden="true" />전체 복사</button>
+              <button type="button" role="menuitem" onClick={selectPassageText}>선택 복사</button>
+            </div>
+          )}
+          {copyNotice && <span className="memo-copy-notice" role="status">{copyNotice}</span>}
         </div>
         {mode === 'edit' ? (
           <textarea
@@ -4297,6 +4410,10 @@ function VerseHighlightedText({ text, highlight }) {
   );
 }
 
+function PlusFeatureBadge() {
+  return <span className="plus-feature-badge" aria-hidden="true"><Plus size={8} strokeWidth={3.2} /></span>;
+}
+
 function BibleView({
   selectedBook,
   selectedBookId,
@@ -4585,7 +4702,10 @@ function BibleView({
     }
   };
 
-  const openNoteEditor = (verse) => {
+  const openNoteEditor = (selection) => {
+    const verses = (Array.isArray(selection) ? selection : [selection]).filter(Boolean);
+    const verse = verses[0];
+    if (!verse) return;
     if (!isPlus) {
       onRequestPlus('bible-memo');
       return;
@@ -4594,7 +4714,7 @@ function BibleView({
     setVerseActionAnchor(null);
     setMultiActionAnchor(null);
     setHighlightPickerVerseId('');
-    setNoteSheet({ mode: verseNotes[verse.id]?.trim() ? 'view' : 'edit', verse });
+    setNoteSheet({ mode: verseNotes[verse.id]?.trim() ? 'view' : 'edit', verse, verses });
   };
 
   const showActionNotice = (message) => {
@@ -5013,10 +5133,11 @@ function BibleView({
           {multiActionAnchor?.source === 'confirm' && (
             <div className={`verse-action-inline is-header ${multiActionClosing ? 'is-closing' : ''}`} role="dialog" aria-label={`${selectedVerseIds.length}개 절 옵션`}>
               <div className="verse-action-toolbar">
-                <button type="button" aria-label="선택한 절 메모" title="메모" onClick={() => {
-                  const firstVerse = activeVerses.find(({ id }) => selectedVerseIds.includes(id));
-                  finishMultiAction(() => { if (firstVerse) openNoteEditor(firstVerse); });
-                }}><NotebookPen size={18} /></button>
+                <button className="is-plus-feature" type="button" aria-label="선택한 절 메모, 바이블온 플러스" title="메모 · Plus" onClick={() => {
+                  const selectedIds = new Set(selectedVerseIds);
+                  const verses = activeVerses.filter(({ id }) => selectedIds.has(id));
+                  finishMultiAction(() => openNoteEditor(verses));
+                }}><NotebookPen size={18} /><PlusFeatureBadge /></button>
                 <button type="button" aria-label="선택한 절 강조" title="강조" onClick={() => {
                   setVerseHighlights((current) => {
                     const next = { ...current };
@@ -5034,7 +5155,7 @@ function BibleView({
                   const verses = activeVerses.filter(({ id }) => selectedIds.has(id));
                   finishMultiAction(() => shareVerses(verses));
                 }}><Send size={18} /></button>
-                <button type="button" aria-label="선택한 절 분석" title="분석" onClick={() => { openVerseAnalysis(); finishMultiAction(); }}><Search size={18} /></button>
+                <button className="is-plus-feature" type="button" aria-label="선택한 절 분석, 바이블온 플러스" title="분석 · Plus" onClick={() => { openVerseAnalysis(); finishMultiAction(); }}><Search size={18} /><PlusFeatureBadge /></button>
               </div>
             </div>
           )}
@@ -5113,7 +5234,7 @@ function BibleView({
                   {showVerseActions && (
                     <div className={`verse-action-inline ${verseActionClosing ? 'is-closing' : ''}`} role="dialog" aria-label={`${verse.ref} 옵션`}>
                       <div className="verse-action-toolbar">
-                        <button className={hasNote ? 'is-on' : ''} type="button" aria-label={hasNote ? '메모 확인 및 수정' : '메모 작성'} title={hasNote ? '메모 수정' : '메모'} onClick={() => dismissVerseActions(() => openNoteEditor(verse))}><NotebookPen size={18} /></button>
+                        <button className={`${hasNote ? 'is-on ' : ''}is-plus-feature`} type="button" aria-label={`${hasNote ? '메모 확인 및 수정' : '메모 작성'}, 바이블온 플러스`} title={`${hasNote ? '메모 수정' : '메모'} · Plus`} onClick={() => dismissVerseActions(() => openNoteEditor(verse))}><NotebookPen size={18} /><PlusFeatureBadge /></button>
                         <button className={highlight ? 'is-on' : ''} type="button" aria-label={highlight ? '강조 해제' : '강조 설정'} title={highlight ? '강조 해제' : '강조'} onClick={() => {
                           if (highlight) {
                             handleHighlightButton(verse.id);
@@ -5121,7 +5242,7 @@ function BibleView({
                           } else handleHighlightButton(verse.id);
                         }}><Highlighter size={18} /></button>
                         <button type="button" aria-label="말씀 전달" title="전달" onClick={() => dismissVerseActions(() => shareVerses([verse]))}><Send size={18} /></button>
-                        <button type="button" aria-label="말씀 분석" title="분석" onClick={() => { openVerseAnalysis(); dismissVerseActions(); }}><Search size={18} /></button>
+                        <button className="is-plus-feature" type="button" aria-label="말씀 분석, 바이블온 플러스" title="분석 · Plus" onClick={() => { openVerseAnalysis(); dismissVerseActions(); }}><Search size={18} /><PlusFeatureBadge /></button>
                       </div>
                     </div>
                   )}
@@ -5146,10 +5267,11 @@ function BibleView({
                   {showMultiActions && (
                     <div className={`verse-action-inline ${multiActionClosing ? 'is-closing' : ''}`} role="dialog" aria-label={`${selectedVerseIds.length}개 절 옵션`}>
                       <div className="verse-action-toolbar">
-                        <button type="button" aria-label="선택한 절 메모" title="메모" onClick={() => {
-                          const firstVerse = activeVerses.find(({ id }) => selectedVerseIds.includes(id));
-                          finishMultiAction(() => { if (firstVerse) openNoteEditor(firstVerse); });
-                        }}><NotebookPen size={18} /></button>
+                        <button className="is-plus-feature" type="button" aria-label="선택한 절 메모, 바이블온 플러스" title="메모 · Plus" onClick={() => {
+                          const selectedIds = new Set(selectedVerseIds);
+                          const verses = activeVerses.filter(({ id }) => selectedIds.has(id));
+                          finishMultiAction(() => openNoteEditor(verses));
+                        }}><NotebookPen size={18} /><PlusFeatureBadge /></button>
                         <button type="button" aria-label="선택한 절 강조" title="강조" onClick={() => {
                           setVerseHighlights((current) => {
                             const next = { ...current };
@@ -5167,7 +5289,7 @@ function BibleView({
                           const verses = activeVerses.filter(({ id }) => selectedIds.has(id));
                           finishMultiAction(() => shareVerses(verses));
                         }}><Send size={18} /></button>
-                        <button type="button" aria-label="선택한 절 분석" title="분석" onClick={() => { openVerseAnalysis(); finishMultiAction(); }}><Search size={18} /></button>
+                        <button className="is-plus-feature" type="button" aria-label="선택한 절 분석, 바이블온 플러스" title="분석 · Plus" onClick={() => { openVerseAnalysis(); finishMultiAction(); }}><Search size={18} /><PlusFeatureBadge /></button>
                       </div>
                     </div>
                   )}
@@ -5223,6 +5345,7 @@ function BibleView({
         <div className="memo-library-layer">
           <MemoEditorScreen
             verse={noteSheet.verse}
+            verses={noteSheet.verses}
             value={verseNotes[noteSheet.verse.id] ?? ''}
             initialMode={noteSheet.mode}
             onChange={(value) => updateNote(noteSheet.verse, value)}

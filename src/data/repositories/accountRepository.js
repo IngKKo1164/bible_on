@@ -104,8 +104,8 @@ function buildPreferenceRow(userId, preferences) {
   const row = {
     user_id: userId,
     default_translation: preferences.defaultTranslation ?? 'KRV',
-    theme_preference: preferences.themePreference ?? 'system',
-    theme_control_mode: preferences.themeControlMode ?? 'system',
+    theme_preference: preferences.themePreference ?? 'light',
+    theme_control_mode: preferences.themeControlMode ?? 'always',
     dark_mode_start: preferences.darkModeStart ?? '21:00',
     dark_mode_end: preferences.darkModeEnd ?? '07:00',
     timezone: preferences.timezone ?? 'Asia/Seoul',
@@ -184,7 +184,7 @@ async function migrateLocalAccountFoundation(client, user) {
 
   const localProfile = accountCache.read(PROFILE_KEY, {}, { userId: user.id });
   const localOnboarding = accountCache.read('bibleon.accountOnboardingV1', {}, { userId: user.id });
-  const localThemePreference = accountCache.read('bibleon.themePreference', 'system', { userId: user.id });
+  const localThemePreference = accountCache.read('bibleon.themePreference', 'light', { userId: user.id });
   const localThemeControlMode = accountCache.read(
     'bibleon.themeControlMode',
     ['system', 'schedule'].includes(localThemePreference) ? localThemePreference : 'always',
@@ -212,8 +212,8 @@ async function migrateLocalAccountFoundation(client, user) {
     client.from('user_preferences').upsert({
       user_id: user.id,
       default_translation: accountCache.read('bibleon.defaultTranslation', remotePreferences.default_translation || 'KRV', { userId: user.id }),
-      theme_preference: accountCache.read('bibleon.themePreference', remotePreferences.theme_preference || 'system', { userId: user.id }),
-      theme_control_mode: localThemeControlMode || remotePreferences.theme_control_mode || 'system',
+      theme_preference: accountCache.read('bibleon.themePreference', remotePreferences.theme_preference || 'light', { userId: user.id }),
+      theme_control_mode: localThemeControlMode || remotePreferences.theme_control_mode || 'always',
       dark_mode_start: accountCache.read('bibleon.darkModeStart', remotePreferences.dark_mode_start || '21:00', { userId: user.id }),
       dark_mode_end: accountCache.read('bibleon.darkModeEnd', remotePreferences.dark_mode_end || '07:00', { userId: user.id }),
       timezone: remotePreferences.timezone || 'Asia/Seoul',

@@ -6,6 +6,7 @@ import { buildMessageViewModel } from '../../src/data/repositories/messageViewAd
 const coreSqlUrl = new URL('../../supabase/migrations/20260904030000_core_application.sql', import.meta.url);
 const noteSqlUrl = new URL('../../supabase/migrations/20260904060000_profile_and_note_sync.sql', import.meta.url);
 const departmentSqlUrl = new URL('../../supabase/migrations/20260904080000_department_management_rpcs.sql', import.meta.url);
+const lightThemeSqlUrl = new URL('../../supabase/migrations/20260905093000_light_theme_default.sql', import.meta.url);
 
 test('core shared and personal tables all enable RLS', async () => {
   const sql = await readFile(coreSqlUrl, 'utf8');
@@ -42,6 +43,12 @@ test('department deletion moves subtree members to the parent first', async () =
   assert.match(coreSql, /insert into public\.department_members[\s\S]*select target_church, parent_department, dm\.user_id/i);
   assert.match(coreSql, /delete from public\.departments where id = target_department/i);
   assert.match(managementSql, /revoke delete on public\.departments from authenticated/i);
+});
+
+test('new accounts default to light mode with manual theme control', async () => {
+  const sql = await readFile(lightThemeSqlUrl, 'utf8');
+  assert.match(sql, /theme_preference set default 'light'/i);
+  assert.match(sql, /theme_control_mode set default 'always'/i);
 });
 
 test('message adapter computes unread counts from shared read sequences', () => {
