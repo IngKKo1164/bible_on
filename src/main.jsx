@@ -883,14 +883,38 @@ const PLUS_FEATURES = [
   { id: 'chat-limit', title: '채팅 한도 10배', description: '하루 질문 토큰을 기본 한도의 10배로 늘려요.', icon: MessageCircle },
   { id: 'worship-memo', title: '예배 메모', description: '예배별 메모를 모아 다시 확인해요.', icon: PenLine },
   { id: 'worship-summary', title: '예배 음성 요약', description: '예배 음성을 기록하고 핵심 내용을 정리해요.', icon: AudioLines },
-  { id: 'theme', title: '테마 커스터마이즈', description: '바이블온의 포인트 색상을 취향에 맞게 바꿔요.', icon: Palette },
+  { id: 'theme', title: '테마 커스터마이즈', description: '배경과 강조에 쓰이는 다섯 색조를 각각 바꿔요.', icon: Palette },
 ];
-const ACCENT_THEME_OPTIONS = [
-  { id: 'violet', label: '보라', color: '#4b4298' },
-  { id: 'mint', label: '민트', color: '#267a6a' },
-  { id: 'rose', label: '로즈', color: '#9b5068' },
-  { id: 'sky', label: '하늘', color: '#3f6f9d' },
-];
+const THEME_TONE_OPTIONS = Object.freeze([
+  { id: 'pale', label: '배경', description: '앱 배경과 가장 옅은 면', cssVariable: '--theme-pale-hue', previewVariable: '--accent-pale', defaultHue: 255, saturation: 46, lightness: 95 },
+  { id: 'soft', label: '옅은 강조', description: '선택 배경과 부드러운 강조', cssVariable: '--theme-soft-hue', previewVariable: '--accent-soft', defaultHue: 256, saturation: 49, lightness: 92 },
+  { id: 'accent', label: '기본 강조', description: '아이콘과 진행 표시', cssVariable: '--theme-accent-hue', previewVariable: '--accent', defaultHue: 254, saturation: 30, lightness: 70 },
+  { id: 'deep', label: '진한 강조', description: '주요 버튼과 활성 상태', cssVariable: '--theme-deep-hue', previewVariable: '--accent-deep', defaultHue: 246, saturation: 39, lightness: 43 },
+  { id: 'dark', label: '강한 강조', description: '가장 높은 대비의 포인트', cssVariable: '--theme-dark-hue', previewVariable: '--accent-dark', defaultHue: 247, saturation: 40, lightness: 31 },
+]);
+const DEFAULT_THEME_PALETTE = Object.freeze(Object.fromEntries(
+  THEME_TONE_OPTIONS.map(({ id, defaultHue }) => [id, defaultHue])
+));
+const LEGACY_THEME_HUES = Object.freeze({
+  violet: DEFAULT_THEME_PALETTE,
+  mint: Object.freeze({ pale: 165, soft: 168, accent: 168, deep: 168, dark: 169 }),
+  rose: Object.freeze({ pale: 345, soft: 339, accent: 340, deep: 341, dark: 340 }),
+  sky: Object.freeze({ pale: 209, soft: 207, accent: 208, deep: 210, dark: 208 }),
+});
+
+function normalizeThemeHue(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.round(((parsed % 360) + 360) % 360);
+}
+
+function normalizeThemePalette(value, legacyTheme = 'violet') {
+  const legacyPalette = LEGACY_THEME_HUES[legacyTheme] ?? DEFAULT_THEME_PALETTE;
+  return Object.fromEntries(THEME_TONE_OPTIONS.map(({ id }) => [
+    id,
+    normalizeThemeHue(value?.[id], legacyPalette[id]),
+  ]));
+}
 
 function normalizeNotificationPreferences(value) {
   return {
@@ -1327,9 +1351,11 @@ function App() {
 
   const isPlus = plusPreviewMode || subscription.plan === 'plus';
   const notificationPreferences = normalizeNotificationPreferences(accountOnboarding.notificationPreferences);
-  const accentTheme = isPlus && ACCENT_THEME_OPTIONS.some(({ id }) => id === accountOnboarding.accentTheme)
-    ? accountOnboarding.accentTheme
-    : 'violet';
+  const themePalette = useMemo(() => (
+    isPlus
+      ? normalizeThemePalette(accountOnboarding.themePalette, accountOnboarding.accentTheme)
+      : { ...DEFAULT_THEME_PALETTE }
+  ), [accountOnboarding.accentTheme, accountOnboarding.themePalette, isPlus]);
   const chatUsage = normalizeChatUsage(accountOnboarding.chatUsage);
   const chatTokenLimit = isPlus ? PLUS_DAILY_CHAT_TOKEN_LIMIT : FREE_DAILY_CHAT_TOKEN_LIMIT;
   const lastBibleReadAt = Number(accountOnboarding.lastBibleReadAt) || 0;
@@ -1606,9 +1632,12 @@ function App() {
     };
   }, [darkModeEnd, darkModeStart, themeControlMode, themePreference]);
 
-  useEffect(() => {
-    document.documentElement.dataset.accent = accentTheme;
-  }, [accentTheme]);
+  useLayoutEffect(() => {
+    delete document.documentElement.dataset.accent;
+    THEME_TONE_OPTIONS.forEach(({ id, cssVariable }) => {
+      document.documentElement.style.setProperty(cssVariable, String(themePalette[id]));
+    });
+  }, [themePalette]);
 
   const selectBiblePassage = (bookId = selectedBookId, chapter = selectedChapter) => {
     setSelectedBookId(bookId);
@@ -1755,12 +1784,31 @@ function App() {
     }));
   };
 
-  const updateAccentTheme = (nextTheme) => {
+  const updateThemeHue = (toneId, nextHue) => {
     if (!isPlus) {
       requestPlus('theme');
       return;
     }
-    setAccountOnboarding((current) => ({ ...current, accentTheme: nextTheme }));
+    if (!THEME_TONE_OPTIONS.some(({ id }) => id === toneId)) return;
+    setAccountOnboarding((current) => ({
+      ...current,
+      themePalette: {
+        ...normalizeThemePalette(current.themePalette, current.accentTheme),
+        [toneId]: normalizeThemeHue(nextHue, DEFAULT_THEME_PALETTE[toneId]),
+      },
+    }));
+  };
+
+  const resetThemePalette = () => {
+    if (!isPlus) {
+      requestPlus('theme');
+      return;
+    }
+    setAccountOnboarding((current) => ({
+      ...current,
+      accentTheme: 'violet',
+      themePalette: { ...DEFAULT_THEME_PALETTE },
+    }));
   };
 
   const consumeChatTokens = (requestedTokens) => {
@@ -2395,8 +2443,9 @@ function App() {
           notificationPreferences={notificationPreferences}
           onNotificationPreferenceChange={updateNotificationPreference}
           readingReminderDays={readingReminderDays}
-          accentTheme={accentTheme}
-          onAccentThemeChange={updateAccentTheme}
+          themePalette={themePalette}
+          onThemeHueChange={updateThemeHue}
+          onThemePaletteReset={resetThemePalette}
           onSignOut={async () => {
             await signOutCurrentAccount();
             window.location.assign('/onboarding');
@@ -2670,8 +2719,9 @@ function Topbar({
   notificationPreferences,
   onNotificationPreferenceChange,
   readingReminderDays,
-  accentTheme,
-  onAccentThemeChange,
+  themePalette,
+  onThemeHueChange,
+  onThemePaletteReset,
   onSignOut,
 }) {
   const [notificationOpen, setNotificationOpen] = useState(false);
@@ -2922,23 +2972,37 @@ function Topbar({
                 <span><Moon size={20} aria-hidden="true" /><span><strong>다크 모드</strong><small>{themeControlMode === 'always' ? (alwaysDarkEnabled ? '항상 사용 중' : '라이트 모드 사용 중') : themeControlMode === 'system' ? '시스템 설정으로 자동 적용' : `${darkModeStart}부터 ${darkModeEnd}까지 자동 적용`}</small></span></span>
                 <i className={darkModeToggleChecked ? 'is-on' : ''}><b /></i>
               </button>
-              <div className="settings-accent-block">
-                <div><Palette size={20} aria-hidden="true" /><span><strong>포인트 테마</strong><small>{isPlus ? '앱의 포인트 색상을 선택해요' : 'Plus에서 사용할 수 있어요'}</small></span></div>
-                <div className="settings-accent-options" role="group" aria-label="포인트 테마 선택">
-                  {ACCENT_THEME_OPTIONS.map((option) => (
-                    <button
-                      className={accentTheme === option.id ? 'is-active' : ''}
-                      type="button"
-                      aria-label={`${option.label} 테마${accentTheme === option.id ? ', 선택됨' : ''}`}
-                      aria-pressed={accentTheme === option.id}
-                      key={option.id}
-                      onClick={() => onAccentThemeChange(option.id)}
-                    >
-                      <i style={{ background: option.color }} />
-                      {accentTheme === option.id && <Check size={13} aria-hidden="true" />}
-                    </button>
-                  ))}
+              <div className={`settings-accent-block ${isPlus ? '' : 'is-locked'}`}>
+                <div className="settings-accent-heading">
+                  <div><Palette size={20} aria-hidden="true" /><span><strong>테마 색상</strong><small>{isPlus ? '다섯 색조를 각각 조정해요' : 'Plus에서 사용할 수 있어요'}</small></span></div>
+                  <button type="button" aria-label="테마 색상 초기화" title="초기화" disabled={!isPlus} onClick={onThemePaletteReset}><RotateCcw size={16} aria-hidden="true" /></button>
                 </div>
+                <div className="settings-theme-palette" role="group" aria-label="테마 색조 조정">
+                  {THEME_TONE_OPTIONS.map((tone) => {
+                    const hue = themePalette[tone.id];
+                    return (
+                      <label className="settings-theme-tone" key={tone.id}>
+                        <span className="settings-theme-tone-meta">
+                          <i style={{ background: `var(${tone.previewVariable})` }} aria-hidden="true" />
+                          <span><strong>{tone.label}</strong><small>{tone.description}</small></span>
+                          <output>{hue}°</output>
+                        </span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="359"
+                          step="1"
+                          value={hue}
+                          disabled={!isPlus}
+                          aria-label={`${tone.label} 색조`}
+                          style={{ '--tone-color': `hsl(${hue} ${tone.saturation}% ${tone.lightness}%)` }}
+                          onChange={(event) => onThemeHueChange(tone.id, event.target.value)}
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+                {!isPlus && <button className="settings-theme-unlock" type="button" onClick={() => onRequestPlus('theme')}>Plus로 테마 열기</button>}
               </div>
                 </section>
 
