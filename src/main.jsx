@@ -159,26 +159,131 @@ const translations = [
   { id: 'RNKSV', label: '새번역' },
 ];
 
-function buildVerseMemoEntries(verseNotes, verseNoteMeta) {
-  return Object.entries(verseNotes).map(([id, note], insertionIndex) => {
-    const metadata = verseNoteMeta[id] ?? {};
-    const idMatch = id.match(/^(.+)-(\d+)-(.+)$/);
-    const book = bibleBooks.find(({ id: bookId }) => bookId === (metadata.bookId ?? idMatch?.[1]));
-    const chapter = Number(metadata.chapter ?? idMatch?.[2] ?? 0);
-    const verse = Number(metadata.verse ?? idMatch?.[3] ?? 0);
+function createMemoId(prefix = 'memo') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function toMemoVerseSnapshot(verse) {
+  const idMatch = String(verse?.id ?? '').match(/^(.+)-(\d+)-(.+)$/);
+  const bookId = verse?.bookId ?? idMatch?.[1] ?? '';
+  const chapter = Number(verse?.chapter ?? idMatch?.[2] ?? 0);
+  const verseNumber = Number(verse?.verse ?? verse?.label ?? idMatch?.[3] ?? 0);
+  const book = bibleBooks.find(({ id }) => id === bookId);
+  return {
+    id: verse?.id ?? `${bookId}-${chapter}-${verseNumber}`,
+    ref: verse?.ref ?? `${book?.name ?? '성경'} ${chapter}:${verseNumber}`,
+    text: verse?.text ?? '',
+    bookId,
+    chapter,
+    verse: verseNumber,
+  };
+}
+
+function formatMemoPassageReference(verses) {
+  const snapshots = verses.map(toMemoVerseSnapshot);
+  if (snapshots.length <= 1) return snapshots[0]?.ref ?? '말씀 메모';
+  const first = snapshots[0];
+  const last = snapshots[snapshots.length - 1];
+  const sameChapter = first.bookId === last.bookId && first.chapter === last.chapter;
+  if (!sameChapter) return `${first.ref} - ${last.ref}`;
+  const book = bibleBooks.find(({ id }) => id === first.bookId);
+  return `${book?.name ?? first.ref.split(/\s+\d+:/)[0]} ${first.chapter}:${first.verse}-${last.verse}`;
+}
+
+function createMemoTarget(verses, options = {}) {
+  const snapshots = verses.map(toMemoVerseSnapshot).filter(({ id }) => Boolean(id));
+  const verseIds = snapshots.map(({ id }) => id);
+  return {
+    type: verseIds.length > 1 ? 'passage' : 'verse',
+    threadKey: verseIds.length > 1 ? `passage:${verseIds.join('|')}` : `verse:${verseIds[0] ?? ''}`,
+    reference: options.reference ?? formatMemoPassageReference(snapshots),
+    verseIds,
+    verses: snapshots,
+    includeRelated: Boolean(options.includeRelated),
+  };
+}
+
+function normalizeMemoComments(stored, legacyNotes = {}, legacyMeta = {}, hasStoredVersion = false) {
+  if (hasStoredVersion && Array.isArray(stored)) {
+    return stored.map((entry, index) => {
+      const verses = Array.isArray(entry.verses) && entry.verses.length
+        ? entry.verses.map(toMemoVerseSnapshot)
+        : (entry.verseIds ?? []).map((id) => toMemoVerseSnapshot({ id }));
+      const target = createMemoTarget(verses, { reference: entry.reference });
+      return {
+        id: entry.id ?? `memo-restored-${index}`,
+        threadKey: entry.threadKey ?? target.threadKey,
+        reference: entry.reference ?? target.reference,
+        verseIds: target.verseIds,
+        verses: target.verses,
+        body: String(entry.body ?? entry.note ?? ''),
+        parentId: entry.parentId ?? null,
+        createdAt: Number(entry.createdAt ?? index),
+        updatedAt: Number(entry.updatedAt ?? entry.createdAt ?? index),
+      };
+    }).filter(({ body, verseIds }) => body.trim() && verseIds.length);
+  }
+
+  return Object.entries(legacyNotes).map(([id, body], insertionIndex) => {
+    const metadata = legacyMeta[id] ?? {};
+    const verse = toMemoVerseSnapshot({ id, ...metadata });
+    const target = createMemoTarget([verse]);
     return {
-      id,
-      note,
-      ref: metadata.ref ?? `${book?.name ?? '성경'} ${chapter}:${metadata.verse ?? idMatch?.[3] ?? ''}`,
-      text: metadata.text ?? '',
-      bookId: book?.id ?? metadata.bookId ?? '',
-      bookOrder: Math.max(0, bibleBooks.findIndex(({ id: bookId }) => bookId === book?.id)),
-      chapter,
-      verse,
+      id: `legacy-${id}`,
+      ...target,
+      body: String(body ?? ''),
+      parentId: null,
       createdAt: Number(metadata.createdAt ?? insertionIndex),
       updatedAt: Number(metadata.updatedAt ?? insertionIndex),
     };
+  }).filter(({ body }) => body.trim());
+}
+
+function buildMemoThreadEntries(memoComments) {
+  const grouped = new Map();
+  memoComments.forEach((comment) => {
+    const current = grouped.get(comment.threadKey) ?? [];
+    current.push(comment);
+    grouped.set(comment.threadKey, current);
   });
+  return Array.from(grouped.entries()).map(([threadKey, comments]) => {
+    const ordered = [...comments].sort((left, right) => left.updatedAt - right.updatedAt);
+    const latest = ordered[ordered.length - 1];
+    const firstVerse = latest.verses[0] ?? toMemoVerseSnapshot({ id: latest.verseIds[0] });
+    return {
+      ...createMemoTarget(latest.verses, { reference: latest.reference }),
+      id: threadKey,
+      threadKey,
+      latest,
+      commentCount: ordered.length,
+      createdAt: Math.min(...ordered.map(({ createdAt }) => createdAt)),
+      updatedAt: Math.max(...ordered.map(({ updatedAt }) => updatedAt)),
+      bookOrder: Math.max(0, bibleBooks.findIndex(({ id }) => id === firstVerse.bookId)),
+      chapter: Number(firstVerse.chapter ?? 0),
+      verse: Number(firstVerse.verse ?? 0),
+    };
+  });
+}
+
+function normalizeWorshipMemoEntries(value = {}) {
+  if (Array.isArray(value.entries)) {
+    return value.entries.map((entry, index) => ({
+      id: entry.id ?? `worship-memo-${index}`,
+      body: String(entry.body ?? entry.memo ?? ''),
+      parentId: entry.parentId ?? null,
+      createdAt: Number(entry.createdAt ?? index),
+      updatedAt: Number(entry.updatedAt ?? entry.createdAt ?? index),
+    })).filter(({ body }) => body.trim());
+  }
+  if (!String(value.memo ?? '').trim()) return [];
+  const timestamp = Number(value.updatedAt ?? 0);
+  return [{
+    id: `legacy-worship-${timestamp}`,
+    body: String(value.memo),
+    parentId: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }];
 }
 
 function saveVerseMemo(setVerseNotes, setVerseNoteMeta, verse, value) {
@@ -1442,6 +1547,15 @@ function App() {
   }));
   const [verseNotes, setVerseNotes] = useState(() => readStoredValue('bibleon.verseNotes', {}));
   const [verseNoteMeta, setVerseNoteMeta] = useState(() => readStoredValue('bibleon.verseNoteMeta', {}));
+  const [memoComments, setMemoComments] = useState(() => {
+    const onboarding = readStoredValue(ACCOUNT_ONBOARDING_STORAGE_KEY, {});
+    return normalizeMemoComments(
+      onboarding.memoCommentsV1,
+      readStoredValue('bibleon.verseNotes', {}),
+      readStoredValue('bibleon.verseNoteMeta', {}),
+      onboarding.memoCommentsVersion === 1
+    );
+  });
   const [verseHighlights, setVerseHighlights] = useState(() => (
     normalizeVerseHighlights(readStoredValue('bibleon.highlightedVerses', {}))
   ));
@@ -1531,6 +1645,14 @@ function App() {
       const mergedOnboarding = { ...localOnboarding, ...remoteOnboarding };
       setAccountOnboarding(mergedOnboarding);
       setMemoViewMode(normalizeMemoViewMode(mergedOnboarding.memoViewMode));
+      const loadedLegacyNotes = personal?.hasRemoteData ? personal.verseNotes : readStoredValue('bibleon.verseNotes', {});
+      const loadedLegacyMeta = personal?.hasRemoteData ? personal.verseNoteMeta : readStoredValue('bibleon.verseNoteMeta', {});
+      setMemoComments(normalizeMemoComments(
+        mergedOnboarding.memoCommentsV1,
+        loadedLegacyNotes,
+        loadedLegacyMeta,
+        mergedOnboarding.memoCommentsVersion === 1
+      ));
       if (account.preferences) {
         const preference = account.preferences;
         if (['KRV', 'RNKSV'].includes(preference.defaultTranslation)) {
@@ -1948,6 +2070,33 @@ function App() {
     }));
   };
 
+  const addMemoComment = ({ target, body, parentId = null }) => {
+    const trimmedBody = String(body ?? '').trim();
+    if (!trimmedBody || !target?.verseIds?.length) return;
+    const timestamp = Date.now();
+    setMemoComments((current) => [...current, {
+      id: createMemoId(),
+      threadKey: target.threadKey,
+      reference: target.reference,
+      verseIds: [...target.verseIds],
+      verses: target.verses.map(toMemoVerseSnapshot),
+      body: trimmedBody,
+      parentId,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }]);
+  };
+
+  const updateMemoComment = (commentId, body) => {
+    const trimmedBody = String(body ?? '').trim();
+    if (!trimmedBody) return;
+    setMemoComments((current) => current.map((comment) => (
+      comment.id === commentId
+        ? { ...comment, body: trimmedBody, updatedAt: Date.now() }
+        : comment
+    )));
+  };
+
   const recordVerseRead = (verse) => {
     const dateKey = getSeoulDateKey();
     setAccountOnboarding((current) => ({ ...current, lastBibleReadAt: Date.now() }));
@@ -2163,6 +2312,14 @@ function App() {
   useEffect(() => {
     writeStoredValue(ACCOUNT_ONBOARDING_STORAGE_KEY, accountOnboarding);
   }, [accountOnboarding]);
+
+  useEffect(() => {
+    setAccountOnboarding((current) => (
+      current.memoCommentsVersion === 1 && current.memoCommentsV1 === memoComments
+        ? current
+        : { ...current, memoCommentsVersion: 1, memoCommentsV1: memoComments }
+    ));
+  }, [memoComments]);
 
   const updateMemoViewMode = (nextMode) => {
     const normalizedMode = normalizeMemoViewMode(nextMode);
@@ -2586,6 +2743,11 @@ function App() {
             setVerseNotes={setVerseNotes}
             verseNoteMeta={verseNoteMeta}
             setVerseNoteMeta={setVerseNoteMeta}
+            memoComments={memoComments}
+            onAddMemoComment={addMemoComment}
+            onUpdateMemoComment={updateMemoComment}
+            worshipMemos={accountOnboarding.worshipMemos ?? {}}
+            onWorshipMemoChange={updateWorshipMemo}
             memoViewMode={memoViewMode}
             onMemoViewModeChange={updateMemoViewMode}
             popularityRankings={popularityRankings}
@@ -2614,6 +2776,9 @@ function App() {
             setVerseNotes={setVerseNotes}
             verseNoteMeta={verseNoteMeta}
             setVerseNoteMeta={setVerseNoteMeta}
+            memoComments={memoComments}
+            onAddMemoComment={addMemoComment}
+            onUpdateMemoComment={updateMemoComment}
             verseHighlights={verseHighlights}
             setVerseHighlights={setVerseHighlights}
             lastHighlightStyle={lastHighlightStyle}
@@ -3616,6 +3781,11 @@ function HomeView({
   setVerseNotes,
   verseNoteMeta,
   setVerseNoteMeta,
+  memoComments,
+  onAddMemoComment,
+  onUpdateMemoComment,
+  worshipMemos,
+  onWorshipMemoChange,
   memoViewMode,
   onMemoViewModeChange,
   popularityRankings,
@@ -3827,7 +3997,7 @@ function HomeView({
                 <span className="home-memo-icon"><NotebookPen size={20} aria-hidden="true" /></span>
                 <span className="home-memo-copy">
                   <strong>나의 메모</strong>
-                  <small>{Object.keys(verseNotes).length ? `저장한 메모 ${Object.keys(verseNotes).length}개` : '기록한 말씀을 한곳에서 확인해요'}</small>
+                  <small>{memoComments.length ? `저장한 메모 ${memoComments.length}개` : '기록한 말씀을 한곳에서 확인해요'}</small>
                 </span>
                 <ChevronRight size={19} aria-hidden="true" />
               </button>
@@ -3907,6 +4077,11 @@ function HomeView({
           setVerseNotes={setVerseNotes}
           verseNoteMeta={verseNoteMeta}
           setVerseNoteMeta={setVerseNoteMeta}
+          memoComments={memoComments}
+          onAddMemoComment={onAddMemoComment}
+          onUpdateMemoComment={onUpdateMemoComment}
+          worshipMemos={worshipMemos}
+          onWorshipMemoChange={onWorshipMemoChange}
           viewMode={memoViewMode}
           onViewModeChange={onMemoViewModeChange}
           onClose={() => setIsMemoLibraryOpen(false)}
@@ -3916,24 +4091,33 @@ function HomeView({
   );
 }
 
-function MemoEditorScreen({ verse, verses, value, initialMode = 'view', onChange, onClose }) {
-  const [mode, setMode] = useState(initialMode);
+function MemoEditorScreen({ target, comments, onAdd, onUpdate, onClose }) {
+  const visibleComments = useMemo(() => comments.filter((comment) => (
+    target.includeRelated && target.verseIds.length === 1
+      ? comment.verseIds.includes(target.verseIds[0])
+      : comment.threadKey === target.threadKey
+  )).sort((left, right) => left.createdAt - right.createdAt), [comments, target]);
+  const [composer, setComposer] = useState(() => visibleComments.length === 0 ? { target, parentId: null } : null);
+  const [editingId, setEditingId] = useState('');
+  const [draft, setDraft] = useState('');
   const [copyActionsOpen, setCopyActionsOpen] = useState(false);
   const [copyNotice, setCopyNotice] = useState('');
   const verseContextRef = useRef(null);
   const verseTextRef = useRef(null);
   const copyPressTimerRef = useRef(null);
   const copyPressRef = useRef(null);
-  const displayedVerses = Array.isArray(verses) && verses.length ? verses : [verse];
+  const displayedVerses = target.verses;
   const passageText = displayedVerses
     .map((item) => `${item.ref}${item.text ? `\n${item.text}` : ''}`)
     .join('\n\n');
 
   useEffect(() => {
-    setMode(initialMode);
+    setComposer(visibleComments.length === 0 ? { target, parentId: null } : null);
+    setEditingId('');
+    setDraft('');
     setCopyActionsOpen(false);
     setCopyNotice('');
-  }, [initialMode, verse.id]);
+  }, [target.threadKey]);
 
   useEffect(() => () => window.clearTimeout(copyPressTimerRef.current), []);
 
@@ -4002,6 +4186,36 @@ function MemoEditorScreen({ verse, verses, value, initialMode = 'view', onChange
     setCopyActionsOpen(false);
   };
 
+  const startNewMemo = () => {
+    setEditingId('');
+    setDraft('');
+    setComposer({ target: createMemoTarget(target.verses, { reference: target.reference }), parentId: null });
+  };
+
+  const continueMemo = (comment) => {
+    setEditingId('');
+    setDraft('');
+    setComposer({
+      target: createMemoTarget(comment.verses, { reference: comment.reference }),
+      parentId: comment.id,
+    });
+  };
+
+  const editMemo = (comment) => {
+    setComposer(null);
+    setEditingId(comment.id);
+    setDraft(comment.body);
+  };
+
+  const saveDraft = () => {
+    if (!draft.trim()) return;
+    if (editingId) onUpdate(editingId, draft);
+    else if (composer) onAdd({ target: composer.target, body: draft, parentId: composer.parentId });
+    setEditingId('');
+    setComposer(null);
+    setDraft('');
+  };
+
   return (
     <section className="memo-editor-screen" role="dialog" aria-modal="true" aria-labelledby="memo-editor-title">
       <header className="memo-screen-header">
@@ -4038,52 +4252,100 @@ function MemoEditorScreen({ verse, verses, value, initialMode = 'view', onChange
           )}
           {copyNotice && <span className="memo-copy-notice" role="status">{copyNotice}</span>}
         </div>
-        {mode === 'edit' ? (
-          <textarea
-            autoFocus
-            className="memo-editor-textarea"
-            aria-label={`${verse.ref} 메모`}
-            value={value}
-            onChange={(event) => onChange(event.target.value)}
-            placeholder="마음에 남은 생각을 적어보세요"
-          />
-        ) : (
-          <p className="memo-editor-preview">{value || '아직 작성한 메모가 없어요.'}</p>
+        <div className="memo-comment-list" aria-label="지난 메모">
+          {visibleComments.map((comment) => {
+            const isRelatedPassage = target.includeRelated && comment.threadKey !== target.threadKey;
+            return (
+              <article className="memo-comment" key={comment.id}>
+                <div className="memo-comment-meta">
+                  <span>{isRelatedPassage ? comment.reference : '나의 메모'}</span>
+                  <time>{new Date(comment.updatedAt).toLocaleDateString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric' })}</time>
+                </div>
+                <p>{comment.body}</p>
+                <div className="memo-comment-actions">
+                  <button type="button" onClick={() => editMemo(comment)}>수정</button>
+                  <button type="button" onClick={() => continueMemo(comment)}>이어 적기</button>
+                </div>
+              </article>
+            );
+          })}
+          {visibleComments.length === 0 && !composer && (
+            <div className="memo-thread-empty">아직 작성한 메모가 없어요.</div>
+          )}
+        </div>
+        {(composer || editingId) && (
+          <section className="memo-composer">
+            <span>{editingId ? '메모 수정' : composer?.parentId ? '이어서 적기' : '새 메모'}</span>
+            <textarea
+              autoFocus
+              className="memo-editor-textarea"
+              aria-label={`${composer?.target.reference ?? target.reference} 메모`}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder="마음에 남은 생각을 적어보세요"
+            />
+          </section>
         )}
       </div>
       <footer className="memo-editor-footer">
-        {mode === 'edit' ? (
-          <><span>입력한 내용은 자동으로 저장돼요</span><button type="button" onClick={() => setMode('view')}>완료</button></>
+        {composer || editingId ? (
+          <><button className="is-secondary" type="button" onClick={() => { setComposer(null); setEditingId(''); setDraft(''); }}>취소</button><button type="button" disabled={!draft.trim()} onClick={saveDraft}>저장</button></>
         ) : (
-          <button type="button" onClick={() => setMode('edit')}><NotebookPen size={17} aria-hidden="true" />메모 수정</button>
+          <button type="button" onClick={startNewMemo}><NotebookPen size={17} aria-hidden="true" />새 메모 남기기</button>
         )}
       </footer>
     </section>
   );
 }
 
-function MemoLibraryScreen({ verseNotes, setVerseNotes, verseNoteMeta, setVerseNoteMeta, viewMode, onViewModeChange, onClose }) {
-  const [sortMode, setSortMode] = useState(() => {
-    const stored = readStoredValue('bibleon.memoSortMode', 'recent');
-    return ['recent', 'oldest', 'genesis', 'revelation'].includes(stored) ? stored : 'recent';
+function MemoLibraryScreen({ memoComments, onAddMemoComment, onUpdateMemoComment, worshipMemos, onWorshipMemoChange, viewMode, onViewModeChange, onClose }) {
+  const [memoType, setMemoType] = useState('bible');
+  const [sortModes, setSortModes] = useState(() => {
+    const stored = readStoredValue('bibleon.memoSortModeV2', readStoredValue('bibleon.memoSortMode', 'recent'));
+    if (stored && typeof stored === 'object') return { bible: stored.bible ?? 'recent', worship: stored.worship ?? 'recent' };
+    return { bible: stored ?? 'recent', worship: 'recent' };
   });
   const [selectedMemoId, setSelectedMemoId] = useState('');
-  const memoEntries = useMemo(() => {
-    const entries = buildVerseMemoEntries(verseNotes, verseNoteMeta);
+  const sortMode = sortModes[memoType];
+  const bibleEntries = useMemo(() => {
+    const entries = buildMemoThreadEntries(memoComments);
     return entries.sort((left, right) => {
       if (sortMode === 'recent') return right.updatedAt - left.updatedAt;
       if (sortMode === 'oldest') return left.createdAt - right.createdAt;
       const canonical = (left.bookOrder - right.bookOrder) || (left.chapter - right.chapter) || (left.verse - right.verse);
       return sortMode === 'revelation' ? -canonical : canonical;
     });
-  }, [sortMode, verseNoteMeta, verseNotes]);
+  }, [memoComments, sortMode]);
+  const worshipEntries = useMemo(() => Object.entries(worshipMemos).map(([id, value]) => {
+    const entries = normalizeWorshipMemoEntries(value);
+    const latest = [...entries].sort((left, right) => right.updatedAt - left.updatedAt)[0];
+    if (!latest) return null;
+    const worship = value.worship ?? {};
+    return {
+      id,
+      value,
+      worship: { id, title: worship.title ?? '예배 메모', coreVerse: worship.coreVerse ?? '', serviceDate: worship.serviceDate ?? worship.createdAt ?? '' },
+      latest,
+      commentCount: entries.length,
+      createdAt: Math.min(...entries.map(({ createdAt }) => createdAt)),
+      updatedAt: Math.max(...entries.map(({ updatedAt }) => updatedAt)),
+      serviceTime: Date.parse(worship.serviceDate ?? worship.createdAt ?? '') || 0,
+    };
+  }).filter(Boolean).sort((left, right) => {
+    if (sortMode === 'recent') return right.updatedAt - left.updatedAt;
+    if (sortMode === 'oldest') return left.createdAt - right.createdAt;
+    return sortMode === 'serviceOldest' ? left.serviceTime - right.serviceTime : right.serviceTime - left.serviceTime;
+  }), [sortMode, worshipMemos]);
+  const memoEntries = memoType === 'bible' ? bibleEntries : worshipEntries;
   const selectedMemo = memoEntries.find(({ id }) => id === selectedMemoId);
   const swipeBack = useSwipeBack(() => {
     if (selectedMemoId) setSelectedMemoId('');
     else onClose();
   });
 
-  useEffect(() => writeStoredValue('bibleon.memoSortMode', sortMode), [sortMode]);
+  useEffect(() => writeStoredValue('bibleon.memoSortModeV2', sortModes), [sortModes]);
+
+  useEffect(() => setSelectedMemoId(''), [memoType]);
 
   if (selectedMemo) {
     return (
@@ -4092,12 +4354,22 @@ function MemoLibraryScreen({ verseNotes, setVerseNotes, verseNoteMeta, setVerseN
         style={swipeBack.style}
         {...swipeBack.handlers}
       >
-        <MemoEditorScreen
-          verse={selectedMemo}
-          value={verseNotes[selectedMemo.id] ?? ''}
-          onChange={(value) => saveVerseMemo(setVerseNotes, setVerseNoteMeta, selectedMemo, value)}
-          onClose={() => setSelectedMemoId('')}
-        />
+        {memoType === 'bible' ? (
+          <MemoEditorScreen
+            target={{ ...selectedMemo, includeRelated: selectedMemo.verseIds.length === 1 }}
+            comments={memoComments}
+            onAdd={onAddMemoComment}
+            onUpdate={onUpdateMemoComment}
+            onClose={() => setSelectedMemoId('')}
+          />
+        ) : (
+          <WorshipMemoScreen
+            worship={selectedMemo.worship}
+            value={selectedMemo.value}
+            onChange={(nextValue) => onWorshipMemoChange(selectedMemo.id, nextValue)}
+            onClose={() => setSelectedMemoId('')}
+          />
+        )}
       </div>
     );
   }
@@ -4116,14 +4388,18 @@ function MemoLibraryScreen({ verseNotes, setVerseNotes, verseNoteMeta, setVerseN
         <h2 id="memo-library-title">나의 메모</h2>
         <span className="memo-count">{memoEntries.length}</span>
       </header>
+      <div className="memo-type-tabs" role="tablist" aria-label="메모 종류">
+        <button className={memoType === 'bible' ? 'is-active' : ''} type="button" role="tab" aria-selected={memoType === 'bible'} onClick={() => setMemoType('bible')}>말씀 메모</button>
+        <button className={memoType === 'worship' ? 'is-active' : ''} type="button" role="tab" aria-selected={memoType === 'worship'} onClick={() => setMemoType('worship')}>예배 메모</button>
+      </div>
       <div className="memo-library-controls">
         <label>
           <span>정렬</span>
-          <select value={sortMode} onChange={(event) => setSortMode(event.target.value)}>
+          <select value={sortMode} onChange={(event) => setSortModes((current) => ({ ...current, [memoType]: event.target.value }))}>
             <option value="recent">최근 메모</option>
             <option value="oldest">오래된 메모</option>
-            <option value="genesis">창세기부터</option>
-            <option value="revelation">요한계시록부터</option>
+            {memoType === 'bible' ? <option value="genesis">창세기부터</option> : <option value="serviceRecent">최근 예배부터</option>}
+            {memoType === 'bible' ? <option value="revelation">요한계시록부터</option> : <option value="serviceOldest">오래된 예배부터</option>}
           </select>
           <ChevronDown size={15} aria-hidden="true" />
         </label>
@@ -4135,13 +4411,15 @@ function MemoLibraryScreen({ verseNotes, setVerseNotes, verseNoteMeta, setVerseN
       <div className={`memo-library-list is-${viewMode}`}>
         {memoEntries.map((entry) => (
           <button type="button" key={entry.id} onClick={() => setSelectedMemoId(entry.id)}>
-            <strong>{entry.ref}</strong>
-            {entry.text && <span className="memo-library-verse">{entry.text}</span>}
-            <p>{entry.note}</p>
+            <strong>{memoType === 'bible' ? entry.reference : entry.worship.title}</strong>
+            {memoType === 'bible' && entry.latest.verses.map(({ text }) => text).filter(Boolean).join(' ') && <span className="memo-library-verse">{entry.latest.verses.map(({ text }) => text).filter(Boolean).join(' ')}</span>}
+            {memoType === 'worship' && entry.worship.serviceDate && <span className="memo-library-verse">{entry.worship.serviceDate}{entry.worship.coreVerse ? ` · ${entry.worship.coreVerse}` : ''}</span>}
+            <p>{entry.latest.body}</p>
+            {entry.commentCount > 1 && <small className="memo-library-comment-count">메모 {entry.commentCount}개</small>}
           </button>
         ))}
         {memoEntries.length === 0 && (
-          <div className="memo-library-empty"><NotebookPen size={25} aria-hidden="true" /><strong>아직 메모가 없어요</strong><span>성경에서 말씀을 길게 눌러 메모를 남겨보세요.</span></div>
+          <div className="memo-library-empty"><NotebookPen size={25} aria-hidden="true" /><strong>아직 {memoType === 'bible' ? '말씀' : '예배'} 메모가 없어요</strong><span>{memoType === 'bible' ? '성경에서 말씀을 길게 눌러 메모를 남겨보세요.' : '공동체의 예배 정보에서 메모를 남겨보세요.'}</span></div>
         )}
       </div>
     </section>
@@ -4613,6 +4891,9 @@ function BibleView({
   setVerseNotes,
   verseNoteMeta,
   setVerseNoteMeta,
+  memoComments,
+  onAddMemoComment,
+  onUpdateMemoComment,
   verseHighlights,
   setVerseHighlights,
   lastHighlightStyle,
@@ -4888,8 +5169,7 @@ function BibleView({
 
   const openNoteEditor = (selection) => {
     const verses = (Array.isArray(selection) ? selection : [selection]).filter(Boolean);
-    const verse = verses[0];
-    if (!verse) return;
+    if (!verses.length) return;
     if (!isPlus) {
       onRequestPlus('bible-memo');
       return;
@@ -4898,7 +5178,7 @@ function BibleView({
     setVerseActionAnchor(null);
     setMultiActionAnchor(null);
     setHighlightPickerVerseId('');
-    setNoteSheet({ mode: verseNotes[verse.id]?.trim() ? 'view' : 'edit', verse, verses });
+    setNoteSheet(createMemoTarget(verses, { includeRelated: verses.length === 1 }));
   };
 
   const showActionNotice = (message) => {
@@ -4990,10 +5270,6 @@ function BibleView({
     setSelectedVerseIds([]);
     setMultiActionAnchor(null);
     setMultiActionClosing(false);
-  };
-
-  const updateNote = (verse, value) => {
-    saveVerseMemo(setVerseNotes, setVerseNoteMeta, verse, value);
   };
 
   const dismissVerseActions = (afterClose) => {
@@ -5370,7 +5646,7 @@ function BibleView({
             const isRead = readVerseIds.includes(verse.id);
             const isSelected = selectedVerse === verse.id;
             const isMultiSelected = selectedVerseIds.includes(verse.id);
-            const hasNote = Boolean(verseNotes[verse.id]?.trim());
+            const hasNote = memoComments.some((comment) => comment.verseIds.includes(verse.id));
             const highlight = verseHighlights[verse.id];
             const showVerseActions = isSelected
               && verseActionAnchor?.source === 'verse'
@@ -5528,11 +5804,10 @@ function BibleView({
       {noteSheet && (
         <div className="memo-library-layer">
           <MemoEditorScreen
-            verse={noteSheet.verse}
-            verses={noteSheet.verses}
-            value={verseNotes[noteSheet.verse.id] ?? ''}
-            initialMode={noteSheet.mode}
-            onChange={(value) => updateNote(noteSheet.verse, value)}
+            target={noteSheet}
+            comments={memoComments}
+            onAdd={onAddMemoComment}
+            onUpdate={onUpdateMemoComment}
             onClose={() => setNoteSheet(null)}
           />
         </div>
@@ -6041,7 +6316,16 @@ function ChurchView({
         <WorshipMemoScreen
           worship={scheduledWorship}
           value={worshipMemos[scheduledWorship.id] ?? { memo: '', transcript: '', summary: '' }}
-          onChange={(nextValue) => onWorshipMemoChange(scheduledWorship.id, nextValue)}
+          onChange={(nextValue) => onWorshipMemoChange(scheduledWorship.id, {
+            ...nextValue,
+            worship: {
+              id: scheduledWorship.id,
+              title: scheduledWorship.title,
+              coreVerse: scheduledWorship.coreVerse,
+              serviceDate: scheduledWorship.serviceDate,
+              createdAt: scheduledWorship.createdAt,
+            },
+          })}
           onClose={() => setWorshipMemoOpen(false)}
         />
       )}
@@ -6156,19 +6440,50 @@ function summarizeWorshipTranscript(transcript) {
 function WorshipMemoScreen({ worship, value, onChange, onClose }) {
   const [isListening, setIsListening] = useState(false);
   const [speechMessage, setSpeechMessage] = useState('');
+  const [draft, setDraft] = useState('');
+  const [replyTo, setReplyTo] = useState(null);
+  const [editingEntryId, setEditingEntryId] = useState('');
   const recognitionRef = useRef(null);
   const transcriptBaseRef = useRef(value.transcript ?? '');
   const swipeBack = useSwipeBack(onClose);
+  const memoEntries = normalizeWorshipMemoEntries(value).sort((left, right) => left.createdAt - right.createdAt);
 
   useEffect(() => () => recognitionRef.current?.stop?.(), []);
 
   const updateValue = (patch) => onChange({
     memo: value.memo ?? '',
+    entries: memoEntries,
     transcript: value.transcript ?? '',
     summary: value.summary ?? '',
+    worship: value.worship ?? {
+      id: worship.id,
+      title: worship.title,
+      coreVerse: worship.coreVerse,
+      serviceDate: worship.serviceDate,
+      createdAt: worship.createdAt,
+    },
     updatedAt: Date.now(),
     ...patch,
   });
+
+  const saveMemo = () => {
+    const body = draft.trim();
+    if (!body) return;
+    const timestamp = Date.now();
+    const nextEntries = editingEntryId
+      ? memoEntries.map((entry) => entry.id === editingEntryId ? { ...entry, body, updatedAt: timestamp } : entry)
+      : [...memoEntries, {
+        id: createMemoId('worship-memo'),
+        body,
+        parentId: replyTo?.id ?? null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }];
+    updateValue({ memo: body, entries: nextEntries });
+    setDraft('');
+    setReplyTo(null);
+    setEditingEntryId('');
+  };
 
   const toggleListening = () => {
     if (isListening) {
@@ -6217,10 +6532,30 @@ function WorshipMemoScreen({ worship, value, onChange, onClose }) {
           <strong>{worship.title}</strong>
           <small>{worship.coreVerse}</small>
         </section>
-        <label className="worship-memo-field">
+        <section className="worship-memo-field">
           <span>나의 메모</span>
-          <textarea value={value.memo ?? ''} onChange={(event) => updateValue({ memo: event.target.value })} placeholder="예배에서 마음에 남은 내용을 적어보세요" />
-        </label>
+          <div className="worship-memo-comments">
+            {memoEntries.map((entry) => (
+              <article key={entry.id}>
+                <div><span>나</span><time>{new Date(entry.updatedAt).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' })}</time></div>
+                <p>{entry.body}</p>
+                <div className="worship-memo-comment-actions">
+                  <button type="button" onClick={() => { setEditingEntryId(entry.id); setReplyTo(null); setDraft(entry.body); }}>수정</button>
+                  <button type="button" onClick={() => { setEditingEntryId(''); setReplyTo(entry); setDraft(''); }}>이어 적기</button>
+                </div>
+              </article>
+            ))}
+            {!memoEntries.length && <p className="worship-memo-empty">아직 작성한 메모가 없어요.</p>}
+          </div>
+          <div className="worship-memo-composer">
+            <span>{editingEntryId ? '메모 수정' : replyTo ? '이어서 적기' : '새 메모'}</span>
+            <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="예배에서 마음에 남은 내용을 적어보세요" />
+            <div>
+              {(replyTo || editingEntryId) && <button type="button" onClick={() => { setReplyTo(null); setEditingEntryId(''); setDraft(''); }}>취소</button>}
+              <button type="button" disabled={!draft.trim()} onClick={saveMemo}>저장</button>
+            </div>
+          </div>
+        </section>
         <section className="worship-audio-summary">
           <header><div><strong>음성 요약</strong><small>말한 내용을 기록하고 핵심 문장을 정리해요.</small></div><AudioLines size={20} aria-hidden="true" /></header>
           <button className={isListening ? 'is-listening' : ''} type="button" onClick={toggleListening}>

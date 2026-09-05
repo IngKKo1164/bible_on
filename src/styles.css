@@ -6950,6 +6950,32 @@ button.list-row:active,
   text-align: center;
 }
 
+.memo-type-tabs {
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 14px 18px 0;
+  padding: 3px;
+}
+
+.memo-type-tabs button {
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 780;
+  min-height: 38px;
+}
+
+.memo-type-tabs button.is-active {
+  background: var(--accent-pale);
+  color: var(--accent-deep);
+}
+
 .memo-library-controls {
   align-items: center;
   display: flex;
@@ -7086,6 +7112,12 @@ button.list-row:active,
   white-space: pre-wrap;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
+}
+
+.memo-library-comment-count {
+  color: var(--accent-deep);
+  font-size: 9px;
+  font-weight: 760;
 }
 
 .memo-library-list.is-list > button p {
@@ -7233,27 +7265,98 @@ button.list-row:active,
   to { opacity: 1; transform: translate(-50%, 0) scale(1); }
 }
 
-.memo-editor-textarea,
-.memo-editor-preview {
+.memo-comment-list {
+  display: grid;
+  gap: 9px;
+}
+
+.memo-comment {
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  display: grid;
+  gap: 9px;
+  padding: 13px 14px 10px;
+}
+
+.memo-comment-meta,
+.memo-comment-actions {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.memo-comment-meta span {
+  color: var(--accent-deep);
+  font-size: 10px;
+  font-weight: 790;
+}
+
+.memo-comment-meta time {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.memo-comment > p {
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.65;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.memo-comment-actions {
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.memo-comment-actions button {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 730;
+  min-height: 28px;
+  padding: 0 7px;
+}
+
+.memo-comment-actions button:last-child {
+  color: var(--accent-deep);
+}
+
+.memo-thread-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 32px 0;
+  text-align: center;
+}
+
+.memo-composer {
+  display: grid;
+  gap: 7px;
+}
+
+.memo-composer > span {
+  color: var(--accent-deep);
+  font-size: 11px;
+  font-weight: 790;
+}
+
+.memo-editor-textarea {
   background: var(--surface);
   border: 1px solid var(--divider);
   border-radius: 4px;
   color: var(--ink);
-  flex: 1;
   font: inherit;
   font-size: 15px;
   line-height: 1.7;
   margin: 0;
-  min-height: 250px;
+  min-height: 180px;
   outline: 0;
   padding: 16px;
   resize: none;
   white-space: pre-wrap;
   width: 100%;
-}
-
-.memo-editor-preview {
-  color: var(--ink-soft);
 }
 
 .memo-editor-footer {
@@ -7285,6 +7388,15 @@ button.list-row:active,
   justify-content: center;
   min-height: 42px;
   padding: 0 18px;
+}
+
+.memo-editor-footer button:disabled {
+  opacity: 0.42;
+}
+
+.memo-editor-footer button.is-secondary {
+  background: var(--surface-muted);
+  color: var(--ink-soft);
 }
 
 .memo-editor-footer > button:only-child {
@@ -12820,6 +12932,104 @@ button.list-row:active,
   min-height: 150px;
   padding: 11px;
   resize: vertical;
+}
+
+.worship-memo-comments {
+  display: grid;
+  gap: 8px;
+}
+
+.worship-memo-comments > article {
+  background: var(--surface-muted);
+  border: 1px solid var(--divider);
+  border-radius: 5px;
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+}
+
+.worship-memo-comments > article > div {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.worship-memo-comments > article span,
+.worship-memo-comments > article time,
+.worship-memo-composer > span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 730;
+}
+
+.worship-memo-comments > article p,
+.worship-memo-empty {
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.worship-memo-comment-actions {
+  display: flex;
+  gap: 5px;
+  justify-content: flex-end;
+}
+
+.worship-memo-comment-actions button {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 760;
+  min-height: 28px;
+  padding: 0 4px;
+}
+
+.worship-memo-comment-actions button:last-child {
+  color: var(--accent-deep);
+}
+
+.worship-memo-empty {
+  color: var(--muted);
+  padding: 12px 2px;
+  text-align: center;
+}
+
+.worship-memo-composer {
+  display: grid;
+  gap: 7px;
+}
+
+.worship-memo-composer textarea {
+  min-height: 110px;
+}
+
+.worship-memo-composer > div {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.worship-memo-composer button {
+  background: var(--accent-deep);
+  border: 0;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 760;
+  min-height: 34px;
+  padding: 0 13px;
+}
+
+.worship-memo-composer button:first-child:not(:last-child) {
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+}
+
+.worship-memo-composer button:disabled {
+  opacity: 0.42;
 }
 
 .worship-audio-summary > header {

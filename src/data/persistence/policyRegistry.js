@@ -10,6 +10,7 @@ const ACCOUNT_KEYS = [
   'bibleon.homeTestMessagesV2',
   'bibleon.lastHighlightStyle',
   'bibleon.memoSortMode',
+  'bibleon.memoSortModeV2',
   'bibleon.personalProfile',
   'bibleon.readingProgressHistoryV1',
   'bibleon.readingStateV1',
