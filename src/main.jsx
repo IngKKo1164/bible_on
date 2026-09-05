@@ -4252,54 +4252,6 @@ function RichMemoEditor({ body, bodyHtml, contentKey, onChange, ariaLabel, place
     return selection.rangeCount ? selection.getRangeAt(0) : null;
   };
 
-  const getCurrentLine = (range) => {
-    const editor = editorRef.current;
-    let node = range.startContainer.nodeType === Node.ELEMENT_NODE
-      ? range.startContainer
-      : range.startContainer.parentElement;
-    while (node && node !== editor) {
-      if (node.tagName === 'DIV' || node.tagName === 'P') return node;
-      node = node.parentElement;
-    }
-    return editor;
-  };
-
-  const getTextOffset = (container, range) => {
-    const prefix = document.createRange();
-    prefix.selectNodeContents(container);
-    prefix.setEnd(range.startContainer, range.startOffset);
-    return prefix.toString().length;
-  };
-
-  const restoreCaretAtOffset = (container, offset) => {
-    const editor = editorRef.current;
-    const target = container?.isConnected ? container : editor;
-    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
-    let remaining = offset;
-    let textNode = walker.nextNode();
-    while (textNode) {
-      if (remaining <= textNode.textContent.length) {
-        const range = document.createRange();
-        range.setStart(textNode, remaining);
-        range.collapse(true);
-        const selection = window.getSelection();
-        selection.removeAllRanges();
-        selection.addRange(range);
-        savedRangeRef.current = range.cloneRange();
-        return;
-      }
-      remaining -= textNode.textContent.length;
-      textNode = walker.nextNode();
-    }
-    const range = document.createRange();
-    range.selectNodeContents(target);
-    range.collapse(false);
-    const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-    savedRangeRef.current = range.cloneRange();
-  };
-
   const emitContent = () => {
     const editor = editorRef.current;
     if (!editor) return;
@@ -4310,17 +4262,11 @@ function RichMemoEditor({ body, bodyHtml, contentKey, onChange, ariaLabel, place
   };
 
   const applyInlineCommand = (command, value = null) => {
-    const range = restoreSelection();
-    if (!range) return;
-    const appliesToLine = range.collapsed;
-    const line = appliesToLine ? getCurrentLine(range) : null;
-    const caretOffset = appliesToLine ? getTextOffset(line, range) : 0;
-    if (appliesToLine) range.selectNodeContents(line);
+    if (!restoreSelection()) return;
     document.execCommand('styleWithCSS', false, true);
     document.execCommand(command, false, value);
     emitContent();
-    if (appliesToLine) restoreCaretAtOffset(line, caretOffset);
-    else rememberSelection();
+    rememberSelection();
     refreshFormatState();
   };
 
