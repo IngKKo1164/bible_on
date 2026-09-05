@@ -85,6 +85,14 @@ import { messageRepository } from './data/repositories/messageRepository';
 import { subscriptionRepository } from './data/repositories/subscriptionRepository';
 import { buildMessageViewModel } from './data/repositories/messageViewAdapter';
 import {
+  flattenDepartmentNodes,
+  getDepartmentAncestorIds,
+  getDepartmentDepth,
+  getDepartmentMemberIds,
+  getDepartmentSubtreeIds,
+  getMemberDepartmentNode,
+} from './data/communityHierarchy';
+import {
   importGuestAccountData,
   keepGuestAccountDataSeparate,
   shouldAskToImportGuestData,
@@ -818,9 +826,11 @@ function buildCommunityMemberRoles(serverWorkspace, communityId) {
 
 function buildCommunityMembers(serverWorkspace, communityId) {
   if (serverWorkspace?.church?.id !== communityId) return [];
+  const departmentNames = new Map(serverWorkspace.departments.map(({ id, name }) => [id, name]));
   return serverWorkspace.members.map((member) => ({
     ...member,
     id: member.userId ?? member.id,
+    department: departmentNames.get(member.departmentId) ?? '부서 미지정',
     role: member.title || (member.churchRole === 'admin' ? '관리자' : '구성원'),
   }));
 }
@@ -1342,6 +1352,7 @@ function App() {
   const tutorialAdvanceTimerRef = useRef(null);
   const tutorialPreviewCompletedScopesRef = useRef(new Set());
   const initialHomeChatRoomsRef = useRef(null);
+  const sharedDataRequestRef = useRef(0);
   if (initialHomeChatRoomsRef.current === null) {
     initialHomeChatRoomsRef.current = loadHomeChatRooms();
   }
@@ -1558,13 +1569,15 @@ function App() {
 
   const refreshSharedData = useCallback(async () => {
     if (!currentAccountUser) return;
+    const requestId = sharedDataRequestRef.current + 1;
+    sharedDataRequestRef.current = requestId;
     const [workspace, messaging, friendships] = await Promise.all([
       churchRepository.loadWorkspace(currentChurchId).catch(() => null),
       messageRepository.loadCurrent(),
       friendRepository.list().catch(() => []),
     ]);
+    if (requestId !== sharedDataRequestRef.current) return;
     if (workspace) {
-      setServerChurchWorkspace(workspace);
       const remoteCommunityProfiles = await Promise.all((workspace.communities ?? []).map(async (community) => ({
         ...community,
         createdByAdmin: true,
@@ -1572,6 +1585,8 @@ function App() {
           ? await createSignedMediaUrl({ bucket: 'church-media', path: community.profileImagePath }).catch(() => '')
           : '',
       })));
+      if (requestId !== sharedDataRequestRef.current) return;
+      setServerChurchWorkspace(workspace);
       setCommunityIds(remoteCommunityProfiles.map(({ id }) => id).slice(0, MAX_COMMUNITIES));
       setChurchProfiles((current) => ({
         ...current,
@@ -1604,6 +1619,7 @@ function App() {
         tone: 'violet',
       }));
     const uniqueMembers = new Map([...viewModel.members, ...friendMembers].map((member) => [member.id, member]));
+    if (requestId !== sharedDataRequestRef.current) return;
     setMessageMembers([...uniqueMembers.values()].sort((a, b) => a.name.localeCompare(b.name, 'ko-KR')));
     setConversations(viewModel.conversations);
     setQtRooms(viewModel.qtRooms);
@@ -2641,6 +2657,7 @@ function App() {
             churchAccess={churchAccess}
             serverChurchWorkspace={serverChurchWorkspace}
             serverBacked={Boolean(currentAccountUser)}
+            currentUserId={currentAccountUser?.id ?? ''}
             onSearchChurches={searchAvailableChurches}
             onDelegateChurchAdmin={(member) => {
               writeStoredValue('bibleon.churchAdminMemberId', member.id);
@@ -2893,9 +2910,10 @@ function Topbar({
   const signedDepartment = serverChurchWorkspace?.departments?.find(({ id }) => id === signedChurchMember?.departmentId);
   const settingsChurchName = currentChurch?.name || '참여 중인 공동체 없음';
   const settingsNickname = personalProfile?.nickname ? `@${personalProfile.nickname}` : '닉네임 미설정';
-  const settingsDepartment = signedDepartment?.name || (currentChurch ? churchInfo.department : '소속 부서 없음');
+  const settingsDepartment = signedDepartment?.name
+    || (currentChurch?.id === SAMPLE_COMMUNITY_ID ? churchInfo.department : (currentChurch ? '부서 미지정' : '소속 부서 없음'));
   const settingsRole = signedChurchMember?.title
-    || (currentChurch ? (churchAccess?.authority || churchInfo.role) : '직책 없음');
+    || (currentChurch ? (churchAccess?.authority || '구성원') : '직책 없음');
 
   const openNotification = (notification) => {
     markNotificationRead(notification.id);
@@ -3811,7 +3829,7 @@ function HomeView({
                   <div>
                     <span>대표 공동체</span>
                     <strong>{currentCommunity.name}</strong>
-                    <small>{getCommunityTypeLabel(currentCommunity)} · {churchInfo.department}</small>
+                    <small>{getCommunityTypeLabel(currentCommunity)}</small>
                   </div>
                   <ChevronRight size={19} aria-hidden="true" />
                 </section>
@@ -5613,6 +5631,7 @@ function ChurchView({
   onDelegateChurchAdmin,
   serverChurchWorkspace,
   serverBacked,
+  currentUserId,
   onSearchChurches,
   isPlus,
   onRequestPlus,
@@ -5647,17 +5666,29 @@ function ChurchView({
     ];
   });
   const activeQtRoom = qtRooms.find(({ id }) => id === activeQtRoomId);
-  const currentAuthority = churchAccess?.authority ?? churchInfo.authority;
-  const hasChurchAdminPermission = ['관리자', '부서 관리자'].includes(currentAuthority);
   const hasCurrentServerWorkspace = serverChurchWorkspace?.church?.id === currentChurchId;
-  const currentDepartmentNodes = useMemo(() => readCommunityScopedValue(
-    'bibleon.departmentNodes',
-    currentChurchId,
-    buildCommunityDepartmentNodes(currentChurch, serverChurchWorkspace)
-  ), [currentChurch, currentChurchId, managementOpen, serverChurchWorkspace]);
+  const resolvedAuthority = churchAccess?.authority
+    ?? (currentChurchId === SAMPLE_COMMUNITY_ID ? churchInfo.authority : '성도');
+  const currentAuthority = serverBacked && !hasCurrentServerWorkspace ? '성도' : resolvedAuthority;
+  const hasChurchAdminPermission = ['관리자', '부서 관리자'].includes(currentAuthority);
+  const currentDepartmentNodes = useMemo(() => {
+    const serverNodes = buildCommunityDepartmentNodes(currentChurch, serverChurchWorkspace);
+    return hasCurrentServerWorkspace
+      ? serverNodes
+      : readCommunityScopedValue('bibleon.departmentNodes', currentChurchId, serverNodes);
+  }, [currentChurch, currentChurchId, hasCurrentServerWorkspace, managementOpen, serverChurchWorkspace]);
   const localCommunityMemberCount = useMemo(() => new Set(
     currentDepartmentNodes.flatMap(({ memberIds }) => memberIds)
   ).size, [currentDepartmentNodes]);
+  const signedCommunityMember = hasCurrentServerWorkspace
+    ? serverChurchWorkspace.members.find(({ userId, id }) => (userId ?? id) === currentUserId)
+    : null;
+  const signedDepartment = currentDepartmentNodes.find(({ id }) => id === signedCommunityMember?.departmentId)
+    ?? currentDepartmentNodes.find(({ id }) => id === churchAccess?.managerDepartmentId)
+    ?? (currentChurchId === SAMPLE_COMMUNITY_ID
+      ? currentDepartmentNodes.find(({ name }) => name === churchInfo.department)
+      : null);
+  const currentDepartmentName = signedDepartment?.name ?? '부서 미지정';
   const currentCommunityMemberCount = hasCurrentServerWorkspace
     ? serverChurchWorkspace.members.length
     : (serverBacked ? null : Math.max(currentAuthority === '관리자' ? 1 : 0, localCommunityMemberCount));
@@ -5666,40 +5697,39 @@ function ChurchView({
   const communityWorshipPreparations = worshipPreparations.filter((item) => (item.communityId ?? 'grace-spring') === currentChurchId);
   const visibleAnnouncements = useMemo(() => {
     if (currentAuthority === '관리자') return communityAnnouncements;
-    const currentDepartment = currentDepartmentNodes.find(({ name }) => name === churchInfo.department);
     return communityAnnouncements.filter((announcement) => {
       if (!announcement.scopeDepartmentId) return true;
-      if (!currentDepartment) return false;
-      return getDepartmentSubtreeIds(currentDepartmentNodes, announcement.scopeDepartmentId).has(currentDepartment.id);
+      if (!signedDepartment) return false;
+      return getDepartmentSubtreeIds(currentDepartmentNodes, announcement.scopeDepartmentId).has(signedDepartment.id);
     });
-  }, [communityAnnouncements, currentAuthority, currentDepartmentNodes]);
+  }, [communityAnnouncements, currentAuthority, currentDepartmentNodes, signedDepartment]);
   const visibleScheduledWorship = useMemo(() => {
     if (currentAuthority === '관리자') return communityWorshipPreparations.filter(({ status }) => status === 'scheduled');
-    const currentDepartment = currentDepartmentNodes.find(({ name }) => name === churchInfo.department);
     return communityWorshipPreparations.filter((item) => {
       if (item.status !== 'scheduled') return false;
       if (!item.scopeDepartmentId) return true;
-      if (!currentDepartment) return false;
-      return getDepartmentSubtreeIds(currentDepartmentNodes, item.scopeDepartmentId).has(currentDepartment.id);
+      if (!signedDepartment) return false;
+      return getDepartmentSubtreeIds(currentDepartmentNodes, item.scopeDepartmentId).has(signedDepartment.id);
     });
-  }, [communityWorshipPreparations, currentAuthority, currentDepartmentNodes]);
+  }, [communityWorshipPreparations, currentAuthority, currentDepartmentNodes, signedDepartment]);
   const scheduledWorship = visibleScheduledWorship[0] ?? null;
 
   useEffect(() => writeStoredValue('bibleon.churchAnnouncements', announcements), [announcements]);
   useEffect(() => writeStoredValue('bibleon.worshipPreparations', worshipPreparations), [worshipPreparations]);
   useEffect(() => {
-    if (!serverChurchWorkspace) return;
+    const workspaceCommunityId = serverChurchWorkspace?.church?.id;
+    if (!workspaceCommunityId || workspaceCommunityId !== currentChurchId) return;
     const memberNames = new Map(serverChurchWorkspace.members.map((member) => [member.userId, member.name]));
-    setAnnouncements(serverChurchWorkspace.announcements.map((announcement) => ({
+    const nextAnnouncements = serverChurchWorkspace.announcements.map((announcement) => ({
       id: announcement.id,
       title: announcement.title,
       content: announcement.content,
       author: memberNames.get(announcement.created_by) ?? '공동체 관리자',
       time: new Date(announcement.created_at).toLocaleDateString('ko-KR'),
       scopeDepartmentId: announcement.visibility_department_id,
-      communityId: currentChurchId,
-    })));
-    setWorshipPreparations(serverChurchWorkspace.worshipServices.map((service) => ({
+      communityId: workspaceCommunityId,
+    }));
+    const nextWorshipPreparations = serverChurchWorkspace.worshipServices.map((service) => ({
       id: service.id,
       status: service.status,
       title: service.title,
@@ -5711,9 +5741,29 @@ function ChurchView({
       serviceDate: service.service_at ? new Date(service.service_at).toLocaleString('ko-KR') : '',
       createdAt: service.created_at,
       scopeDepartmentId: service.visibility_department_id,
-      communityId: currentChurchId,
-    })));
+      communityId: workspaceCommunityId,
+    }));
+    setAnnouncements((current) => [
+      ...current.filter((item) => (item.communityId ?? SAMPLE_COMMUNITY_ID) !== workspaceCommunityId),
+      ...nextAnnouncements,
+    ]);
+    setWorshipPreparations((current) => [
+      ...current.filter((item) => (item.communityId ?? SAMPLE_COMMUNITY_ID) !== workspaceCommunityId),
+      ...nextWorshipPreparations,
+    ]);
   }, [currentChurchId, serverChurchWorkspace]);
+  useEffect(() => {
+    setCommunityNoticeOpen(false);
+    setQtCreatorOpen(false);
+    setActiveQtRoomId('');
+    setManagementOpen(false);
+    setManagementWarningOpen(false);
+    setDepartmentDirectoryOpen(false);
+    setAnnouncementsExpanded(false);
+    setWorshipExpanded(false);
+    setWorshipMemoOpen(false);
+    setSelectedAnnouncement(null);
+  }, [currentChurchId]);
   useEffect(() => {
     if (!navigationTarget) return;
     if (navigationTarget.kind === 'announcement') {
@@ -5844,7 +5894,7 @@ function ChurchView({
           <span className={`church-avatar ${currentChurch.profileImage ? 'has-image' : ''}`}>
             {currentChurch.profileImage ? <img src={currentChurch.profileImage} alt="" /> : <Church size={25} aria-hidden="true" />}
           </span>
-          <div><span>{getCommunityTypeLabel(currentChurch)}</span><h2>{currentChurch.name}</h2><p>{churchInfo.department} · 구성원 {churchInfo.members}명</p></div>
+          <div><span>{getCommunityTypeLabel(currentChurch)}</span><h2>{currentChurch.name}</h2><p>{currentDepartmentName} · {currentCommunityMemberCount === null ? '구성원 확인 중' : `구성원 ${currentCommunityMemberCount}명`}</p></div>
         </div>
         <blockquote className="church-representative-verse"><p>{currentChurch.representativeVerse}</p><cite>{currentChurch.verseRef}</cite></blockquote>
       </section>
@@ -5927,7 +5977,7 @@ function ChurchView({
       <section className="church-action-card" aria-label="공동체 메뉴">
         <button type="button" onClick={() => setCommunityNoticeOpen(true)}><span><strong>커뮤니티</strong><small>공동체 구성원과 소식을 나눠요</small></span><ChevronRight size={18} /></button>
         <button type="button" onClick={() => setQtCreatorOpen(true)}><span><strong>QT</strong><small>친구와 말씀을 묵상하고 나눠요</small></span><ChevronRight size={18} /></button>
-        <button type="button" onClick={() => setDepartmentDirectoryOpen(true)}><span><strong>부서</strong><small>{churchInfo.department} 구성원과 일정을 확인해요</small></span><ChevronRight size={18} /></button>
+        <button type="button" onClick={() => setDepartmentDirectoryOpen(true)}><span><strong>부서</strong><small>{currentDepartmentName === '부서 미지정' ? '공동체 부서와 구성원을 확인해요' : `${currentDepartmentName} 구성원을 확인해요`}</small></span><ChevronRight size={18} /></button>
       </section>
 
       <div className="church-account-actions">
@@ -6046,6 +6096,7 @@ function ChurchView({
           onSaveChurchProfile={onSaveChurchProfile}
           churchAccess={churchAccess}
           serverWorkspace={serverChurchWorkspace}
+          currentUserId={currentUserId}
           onDelegateChurchAdmin={(member) => {
             setManagementOpen(false);
             onDelegateChurchAdmin(member);
@@ -6380,21 +6431,24 @@ function ChurchDepartmentDirectorySheet({ community, serverWorkspace, onClose })
   const [expandedDepartmentId, setExpandedDepartmentId] = useState('');
   const { isClosing, dismiss } = useSlideDismiss(onClose);
   const hasCurrentServerWorkspace = serverWorkspace?.church?.id === community?.id;
-  const departmentNodes = useMemo(() => readCommunityScopedValue(
-    'bibleon.departmentNodes',
-    community?.id,
-    buildCommunityDepartmentNodes(community, serverWorkspace)
-  ), [community, serverWorkspace]);
-  const memberRoles = useMemo(() => readCommunityScopedValue(
-    'bibleon.churchMemberRoles',
-    community?.id,
-    buildCommunityMemberRoles(serverWorkspace, community?.id)
-  ), [community?.id, serverWorkspace]);
-  const approvedMembers = useMemo(() => readCommunityScopedValue(
-    'bibleon.approvedChurchMembers',
-    community?.id,
-    buildCommunityMembers(serverWorkspace, community?.id)
-  ), [community?.id, serverWorkspace]);
+  const departmentNodes = useMemo(() => {
+    const serverNodes = buildCommunityDepartmentNodes(community, serverWorkspace);
+    return hasCurrentServerWorkspace
+      ? serverNodes
+      : readCommunityScopedValue('bibleon.departmentNodes', community?.id, serverNodes);
+  }, [community, hasCurrentServerWorkspace, serverWorkspace]);
+  const memberRoles = useMemo(() => {
+    const serverRoles = buildCommunityMemberRoles(serverWorkspace, community?.id);
+    return hasCurrentServerWorkspace
+      ? serverRoles
+      : readCommunityScopedValue('bibleon.churchMemberRoles', community?.id, serverRoles);
+  }, [community?.id, hasCurrentServerWorkspace, serverWorkspace]);
+  const approvedMembers = useMemo(() => {
+    const serverMembers = buildCommunityMembers(serverWorkspace, community?.id);
+    return hasCurrentServerWorkspace
+      ? serverMembers
+      : readCommunityScopedValue('bibleon.approvedChurchMembers', community?.id, serverMembers);
+  }, [community?.id, hasCurrentServerWorkspace, serverWorkspace]);
   const membersById = useMemo(() => new Map(
     (hasCurrentServerWorkspace
       ? buildCommunityMembers(serverWorkspace, community?.id)
@@ -6414,7 +6468,9 @@ function ChurchDepartmentDirectorySheet({ community, serverWorkspace, onClose })
         <div className="church-department-directory-list">
           {flattenedNodes.map((node) => {
             const isExpanded = expandedDepartmentId === node.id;
-            const members = node.memberIds.map((id) => membersById.get(id)).filter(Boolean);
+            const members = getDepartmentMemberIds(departmentNodes, node.id)
+              .map((id) => membersById.get(id))
+              .filter(Boolean);
             return (
               <article className={isExpanded ? 'is-expanded' : ''} key={node.id} style={{ '--department-depth': node.depth }}>
                 <button type="button" aria-expanded={isExpanded} onClick={() => setExpandedDepartmentId(isExpanded ? '' : node.id)}>
@@ -6442,56 +6498,6 @@ function ChurchDepartmentDirectorySheet({ community, serverWorkspace, onClose })
   );
 }
 
-function getDepartmentDepth(nodes, nodeId) {
-  let depth = 0;
-  let current = nodes.find(({ id }) => id === nodeId);
-  while (current?.parentId) {
-    depth += 1;
-    current = nodes.find(({ id }) => id === current.parentId);
-  }
-  return depth;
-}
-
-function flattenDepartmentNodes(nodes, parentId = null, depth = 0) {
-  return nodes
-    .filter((node) => node.parentId === parentId)
-    .flatMap((node) => [
-      { ...node, depth },
-      ...flattenDepartmentNodes(nodes, node.id, depth + 1),
-    ]);
-}
-
-function getDepartmentSubtreeIds(nodes, nodeId) {
-  const ids = new Set([nodeId]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    nodes.forEach((node) => {
-      if (node.parentId && ids.has(node.parentId) && !ids.has(node.id)) {
-        ids.add(node.id);
-        changed = true;
-      }
-    });
-  }
-  return ids;
-}
-
-function getDepartmentAncestorIds(nodes, nodeId) {
-  const ids = new Set();
-  let current = nodes.find(({ id }) => id === nodeId);
-  while (current) {
-    ids.add(current.id);
-    current = current.parentId ? nodes.find(({ id }) => id === current.parentId) : null;
-  }
-  return ids;
-}
-
-function getMemberDepartmentNode(nodes, memberId) {
-  return nodes
-    .filter(({ memberIds }) => memberIds.includes(memberId))
-    .sort((left, right) => getDepartmentDepth(nodes, right.id) - getDepartmentDepth(nodes, left.id))[0] ?? null;
-}
-
 function ChurchManagementScreen({
   announcements,
   setAnnouncements,
@@ -6503,25 +6509,30 @@ function ChurchManagementScreen({
   onSaveChurchProfile,
   churchAccess,
   serverWorkspace,
+  currentUserId,
   onDelegateChurchAdmin,
   onClose,
 }) {
+  const hasCurrentServerWorkspace = serverWorkspace?.church?.id === currentCommunityId;
   const [mode, setMode] = useState('departments');
-  const [departmentNodes, setDepartmentNodes] = useState(() => readCommunityScopedValue(
-    'bibleon.departmentNodes',
-    currentCommunityId,
-    buildCommunityDepartmentNodes(churchProfile, serverWorkspace)
-  ));
-  const [memberRoles, setMemberRoles] = useState(() => readCommunityScopedValue(
-    'bibleon.churchMemberRoles',
-    currentCommunityId,
-    buildCommunityMemberRoles(serverWorkspace, currentCommunityId)
-  ));
-  const [approvedMembers, setApprovedMembers] = useState(() => readCommunityScopedValue(
-    'bibleon.approvedChurchMembers',
-    currentCommunityId,
-    buildCommunityMembers(serverWorkspace, currentCommunityId)
-  ));
+  const [departmentNodes, setDepartmentNodes] = useState(() => {
+    const serverNodes = buildCommunityDepartmentNodes(churchProfile, serverWorkspace);
+    return hasCurrentServerWorkspace
+      ? serverNodes
+      : readCommunityScopedValue('bibleon.departmentNodes', currentCommunityId, serverNodes);
+  });
+  const [memberRoles, setMemberRoles] = useState(() => {
+    const serverRoles = buildCommunityMemberRoles(serverWorkspace, currentCommunityId);
+    return hasCurrentServerWorkspace
+      ? serverRoles
+      : readCommunityScopedValue('bibleon.churchMemberRoles', currentCommunityId, serverRoles);
+  });
+  const [approvedMembers, setApprovedMembers] = useState(() => {
+    const serverMembers = buildCommunityMembers(serverWorkspace, currentCommunityId);
+    return hasCurrentServerWorkspace
+      ? serverMembers
+      : readCommunityScopedValue('bibleon.approvedChurchMembers', currentCommunityId, serverMembers);
+  });
   const [joinRequests, setJoinRequests] = useState(() => readCommunityScopedValue(
     'bibleon.churchJoinRequests',
     currentCommunityId,
@@ -6566,10 +6577,12 @@ function ChurchManagementScreen({
   const communityMembers = useMemo(() => {
     const seedMembers = currentCommunityId === SAMPLE_COMMUNITY_ID ? churchMessageMembers : [];
     const membersById = new Map([...seedMembers, ...approvedMembers].map((member) => [member.id, member]));
-    return [...membersById.values()].sort((left, right) => left.name.localeCompare(right.name, 'ko-KR'));
+    return [...membersById.values()].sort((left, right) => (left.name ?? '').localeCompare(right.name ?? '', 'ko-KR'));
   }, [approvedMembers, currentCommunityId]);
   const activeDepartmentMembers = activeDepartment
-    ? activeDepartment.memberIds.map((memberId) => communityMembers.find(({ id }) => id === memberId)).filter(Boolean)
+    ? getDepartmentMemberIds(departmentNodes, activeDepartment.id)
+      .map((memberId) => communityMembers.find(({ id }) => id === memberId))
+      .filter(Boolean)
     : [];
   const positionTarget = communityMembers.find(({ id }) => id === positionTargetId);
   const kickTarget = communityMembers.find(({ id }) => id === kickTargetId);
@@ -6601,9 +6614,15 @@ function ChurchManagementScreen({
       && !adminTransferOpen && !pendingAdminTransfer,
   });
 
-  useEffect(() => writeCommunityScopedValue('bibleon.departmentNodes', currentCommunityId, departmentNodes), [currentCommunityId, departmentNodes]);
-  useEffect(() => writeCommunityScopedValue('bibleon.churchMemberRoles', currentCommunityId, memberRoles), [currentCommunityId, memberRoles]);
-  useEffect(() => writeCommunityScopedValue('bibleon.approvedChurchMembers', currentCommunityId, approvedMembers), [approvedMembers, currentCommunityId]);
+  useEffect(() => {
+    if (!hasCurrentServerWorkspace) writeCommunityScopedValue('bibleon.departmentNodes', currentCommunityId, departmentNodes);
+  }, [currentCommunityId, departmentNodes, hasCurrentServerWorkspace]);
+  useEffect(() => {
+    if (!hasCurrentServerWorkspace) writeCommunityScopedValue('bibleon.churchMemberRoles', currentCommunityId, memberRoles);
+  }, [currentCommunityId, hasCurrentServerWorkspace, memberRoles]);
+  useEffect(() => {
+    if (!hasCurrentServerWorkspace) writeCommunityScopedValue('bibleon.approvedChurchMembers', currentCommunityId, approvedMembers);
+  }, [approvedMembers, currentCommunityId, hasCurrentServerWorkspace]);
   useEffect(() => writeCommunityScopedValue('bibleon.churchJoinRequests', currentCommunityId, joinRequests), [currentCommunityId, joinRequests]);
   useEffect(() => writeCommunityScopedValue('bibleon.churchAutoJoin', currentCommunityId, autoJoinEnabled), [autoJoinEnabled, currentCommunityId]);
 
@@ -6755,7 +6774,7 @@ function ChurchManagementScreen({
   const approveJoinRequest = (request) => {
     const approvedMember = {
       ...request,
-      department: churchInfo.name,
+      department: churchProfile.name,
       role: '등록 교인',
       churchId: churchProfile.id,
       churchName: churchProfile.name,
@@ -6843,7 +6862,7 @@ function ChurchManagementScreen({
               <div className={`department-node ${node.depth === 0 ? 'is-root' : ''}`} style={{ '--department-depth': node.depth }} key={node.id}>
                 <button className="department-node-main" type="button" onClick={() => setActiveDepartmentId(node.id)}>
                   <span className="department-folder"><Folder size={19} fill={node.depth === 0 ? 'currentColor' : 'none'} aria-hidden="true" /></span>
-                  <span className="department-node-copy"><strong>{node.name}</strong><small>{node.memberIds.length}명 · {node.depth + 1}단계</small></span>
+                  <span className="department-node-copy"><strong>{node.name}</strong><small>{getDepartmentMemberIds(departmentNodes, node.id).length}명 · {node.depth + 1}단계</small></span>
                 </button>
                 <div className="department-node-actions">
                   {isChurchAdministrator && node.parentId && <button type="button" aria-label={`${node.name} 구성원 지정`} title="구성원 지정" onClick={() => setAssignmentNodeId(node.id)}><UserPlus size={17} /></button>}
@@ -6879,7 +6898,7 @@ function ChurchManagementScreen({
                       <div className="department-member-menu" role="menu">
                         <button type="button" role="menuitem" onClick={() => beginMemberMove(member.id)}><Folder size={16} />부서 이동</button>
                         <button type="button" role="menuitem" onClick={() => { setActiveMemberMenuId(''); setPositionTargetId(member.id); }}><ShieldCheck size={16} />직위 설정</button>
-                        {isChurchAdministrator && <button className="is-danger" type="button" role="menuitem" onClick={() => { setActiveMemberMenuId(''); setKickTargetId(member.id); }}><UserMinus size={16} />공동체 강퇴</button>}
+                        {isChurchAdministrator && member.id !== currentUserId && <button className="is-danger" type="button" role="menuitem" onClick={() => { setActiveMemberMenuId(''); setKickTargetId(member.id); }}><UserMinus size={16} />공동체 강퇴</button>}
                       </div>
                     )}
                   </div>
@@ -7074,7 +7093,7 @@ function ChurchManagementScreen({
       )}
       {adminTransferOpen && (
         <ChurchAdminTransferSheet
-          members={communityMembers}
+          members={communityMembers.filter(({ id }) => id !== currentUserId)}
           onClose={() => setAdminTransferOpen(false)}
           onConfirm={(member) => {
             setAdminTransferOpen(false);
@@ -7149,12 +7168,17 @@ function DepartmentMemberSheet({ node, nodes, members, onClose, onConfirm }) {
   const [selectedIds, setSelectedIds] = useState([]);
   const { isClosing, dismiss } = useSlideDismiss(onClose);
   const parent = nodes.find(({ id }) => id === node.parentId);
-  const allowedIds = new Set(parent?.memberIds ?? members.map(({ id }) => id));
+  const allowedIds = new Set(parent
+    ? getDepartmentMemberIds(nodes, parent.id)
+    : members.map(({ id }) => id));
+  const assignedIds = new Set(getDepartmentMemberIds(nodes, node.id));
   const normalizedQuery = query.trim().toLowerCase();
   const candidates = members.filter((member) => (
     allowedIds.has(member.id)
-    && !node.memberIds.includes(member.id)
-    && [member.name, member.department, member.role].some((value) => value.toLowerCase().includes(normalizedQuery))
+    && !assignedIds.has(member.id)
+    && [member.name, member.department, member.role]
+      .filter(Boolean)
+      .some((value) => value.toLowerCase().includes(normalizedQuery))
   ));
   const toggleMember = (memberId) => setSelectedIds((current) => current.includes(memberId)
     ? current.filter((id) => id !== memberId)
@@ -7168,7 +7192,7 @@ function DepartmentMemberSheet({ node, nodes, members, onClose, onConfirm }) {
         <div className="admin-member-list">
           {candidates.map((member) => {
             const selected = selectedIds.includes(member.id);
-            return <button className={selected ? 'is-selected' : ''} type="button" key={member.id} onClick={() => toggleMember(member.id)}><span className="member-avatar"><UserRound className="default-profile-glyph" /></span><span><strong>{member.name}</strong><small>{member.department} · {member.role}</small></span><i>{selected && <Check size={15} />}</i></button>;
+            return <button className={selected ? 'is-selected' : ''} type="button" key={member.id} onClick={() => toggleMember(member.id)}><span className="member-avatar"><UserRound className="default-profile-glyph" /></span><span><strong>{member.name}</strong><small>{member.department ?? '부서 미지정'} · {member.role ?? '구성원'}</small></span><i>{selected && <Check size={15} />}</i></button>;
           })}
           {!candidates.length && <p>추가할 수 있는 구성원이 없어요.</p>}
         </div>
@@ -7199,7 +7223,7 @@ function DepartmentDestinationSheet({ nodes, onClose, onSelect }) {
               onClick={() => setSelectedId(node.id)}
             >
               <Folder size={18} fill={selectedId === node.id ? 'currentColor' : 'none'} />
-              <span><strong>{node.name}</strong><small>{node.memberIds.length}명</small></span>
+              <span><strong>{node.name}</strong><small>{getDepartmentMemberIds(nodes, node.id).length}명</small></span>
               <i>{selectedId === node.id && <Check size={14} />}</i>
             </button>
           ))}
@@ -7311,7 +7335,9 @@ function QtCreationFlow({ conversations, qtRooms, selectedTranslation, onClose, 
   const candidates = recentMemberIds
     .map((id) => knownMessageMembers.find((member) => member.id === id))
     .filter(Boolean)
-    .filter((member) => [member.name, member.department, member.role].some((value) => value.toLowerCase().includes(normalizedQuery)));
+    .filter((member) => [member.name, member.department, member.role]
+      .filter(Boolean)
+      .some((value) => value.toLowerCase().includes(normalizedQuery)));
   const existingQtRooms = qtRooms.filter((room) => [
     room.name,
     room.verse?.reference,
@@ -8172,7 +8198,7 @@ function MemberProfileSheet({ member, onClose, onMessage, currentChurchId, selec
         <dl className="member-profile-meta">
           {isDifferentChurch
             ? <div className="is-church-only"><dt>공동체</dt><dd>{memberChurchName}</dd></div>
-            : <><div><dt>부서</dt><dd>{member.department}</dd></div><div><dt>직책</dt><dd>{member.role}</dd></div></>}
+            : <><div><dt>부서</dt><dd>{member.department || '부서 미지정'}</dd></div><div><dt>직책</dt><dd>{member.role || '구성원'}</dd></div></>}
         </dl>
         {onMessage && (
           <button className="member-profile-message" type="button" onClick={() => dismiss(onMessage)}>
@@ -8205,6 +8231,7 @@ function MemberSelectionSheet({
   const normalizedQuery = query.trim().toLowerCase();
   const filteredCandidates = candidates.filter((member) => (
     [member.name, member.department, member.role]
+      .filter(Boolean)
       .some((value) => value.toLowerCase().includes(normalizedQuery))
   ));
   const selectedMembers = candidates.filter(({ id }) => selectedIds.includes(id));
@@ -9331,7 +9358,7 @@ function ProfileView({
           {personalProfile.featuredAchievementName && (
             <b className="profile-featured-achievement"><Award size={12} aria-hidden="true" />{personalProfile.featuredAchievementName}</b>
           )}
-          <p>@{personalProfile.nickname}{currentChurch ? ` · ${churchInfo.department}` : ''}</p>
+          <p>@{personalProfile.nickname}</p>
           <p className="profile-summary-verse"><RepresentativeVerseText reference={personalProfile.verseRef} fallbackText={personalProfile.representativeVerse} translationId={selectedTranslation} /></p>
           <small>{personalProfile.verseRef}</small>
         </div>
